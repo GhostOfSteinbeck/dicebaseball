@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { UniverseState } from './engine/universeState';
 import { GAME_CONFIG } from './engine/gameEngine';
 import GMMode from './modes/GMMode';
+import CareerMode from './modes/CareerMode';
+import LeagueGenerator from './modes/LeagueGenerator';
 
 function App() {
   const [universe] = useState(() => new UniverseState());
@@ -55,7 +57,15 @@ function App() {
             </div>
           </div>
           
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div onClick={() => setScreen('league-generator')} className="bg-stone-800 text-amber-100 border-4 border-amber-900 p-6 cursor-pointer hover:bg-stone-700 transition-all">
+              <div className="text-center">
+                <div className="text-3xl mb-2">🎲</div>
+                <div className="text-xl font-bold mb-2">LEAGUE</div>
+                <div className="text-xs">Generate New League</div>
+              </div>
+            </div>
+            
             <div onClick={() => setScreen('hall-of-fame')} className="bg-stone-800 text-amber-100 border-4 border-amber-900 p-6 cursor-pointer hover:bg-stone-700 transition-all">
               <div className="text-center">
                 <div className="text-3xl mb-2">🏆</div>
@@ -104,7 +114,7 @@ function App() {
           
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
             {universe.league.map((team, idx) => (
-              <div key={idx} onClick={() => alert(`Career Mode with ${team.name} coming next!`)} className="cursor-pointer hover:scale-105 transition-transform">
+              <div key={idx} onClick={() => setScreen('career-mode')} className="cursor-pointer hover:scale-105 transition-transform">
                 <div className="p-6 border-4 border-amber-900 text-center text-white" style={{ backgroundColor: team.colors[0] }}>
                   <div className="w-16 h-16 mx-auto mb-2">{team.logo(team.colors[0])}</div>
                   <div className="text-xs mb-1">{team.city.toUpperCase()}</div>
@@ -131,7 +141,29 @@ function App() {
       universe={universe}
       onExit={() => setScreen('menu')}
     />
-  )}  
+  )}
+
+  // Career Mode
+  if (screen === 'career-mode') {
+    return (
+      <CareerMode 
+        selectedTeam={selectedTeam}
+        universe={universe}
+        onExit={() => setScreen('menu')}
+      />
+    );
+  }
+
+  // League Generator
+  if (screen === 'league-generator') {
+    return (
+      <LeagueGenerator 
+        universe={universe}
+        onExit={() => setScreen('menu')}
+      />
+    );
+  }
+  
   // Hall of Fame Placeholder
   if (screen === 'hall-of-fame') {
     return (
