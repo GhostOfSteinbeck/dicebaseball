@@ -1,10 +1,14 @@
 import React, { useState } from 'react';
 import { UniverseState } from './engine/universeState';
 import { GAME_CONFIG } from './engine/gameEngine';
+import GMMode from './modes/GMMode';
 
 function App() {
   const [universe] = useState(() => new UniverseState());
   const [screen, setScreen] = useState('menu');
+  const [selectedTeam] = useState(() => universe.league[0]);
+  
+
   
   // Menu Screen
   if (screen === 'menu') {
@@ -35,7 +39,7 @@ function App() {
               </div>
             </div>
             
-            <div onClick={() => setScreen('gm-select')} className="bg-amber-100 border-4 border-amber-900 p-8 cursor-pointer hover:bg-amber-200 transition-all hover:scale-105">
+            <div onClick={() => setScreen('gm-mode')} className="bg-amber-100 border-4 border-amber-900 p-8 cursor-pointer hover:bg-amber-200 transition-all hover:scale-105">
               <div className="border-2 border-dashed border-amber-700 p-6">
                 <div className="text-center">
                   <div className="text-xs tracking-widest text-amber-900 mb-2">⭐ ADMIT ONE ⭐</div>
@@ -125,7 +129,7 @@ function App() {
     <GMMode 
       selectedTeam={selectedTeam}
       universe={universe}
-      onExit={() => setScreen('main-menu')}
+      onExit={() => setScreen('menu')}
     />
   )}  
   // Hall of Fame Placeholder

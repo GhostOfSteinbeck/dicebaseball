@@ -1,6 +1,29 @@
 import React from 'react';
 
 // ============================================================================
+// UTILITY FUNCTIONS
+// ============================================================================
+
+export const generateName = () => {
+  const firstNames = [
+    'Alex', 'Jordan', 'Casey', 'Taylor', 'Morgan', 'Riley', 'Avery', 'Quinn',
+    'Blake', 'Cameron', 'Drew', 'Emery', 'Finley', 'Hayden', 'Jamie', 'Kendall',
+    'Logan', 'Parker', 'Reese', 'Sage', 'Skyler', 'Tatum', 'River', 'Phoenix'
+  ];
+  
+  const lastNames = [
+    'Johnson', 'Williams', 'Brown', 'Jones', 'Garcia', 'Miller', 'Davis', 'Rodriguez',
+    'Martinez', 'Hernandez', 'Lopez', 'Gonzalez', 'Wilson', 'Anderson', 'Thomas', 'Taylor',
+    'Moore', 'Jackson', 'Martin', 'Lee', 'Perez', 'Thompson', 'White', 'Harris'
+  ];
+  
+  const firstName = firstNames[Math.floor(Math.random() * firstNames.length)];
+  const lastName = lastNames[Math.floor(Math.random() * lastNames.length)];
+  
+  return `${firstName} ${lastName}`;
+};
+
+// ============================================================================
 // TRAITS
 // ============================================================================
 
