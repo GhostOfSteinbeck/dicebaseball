@@ -1,9 +1,9 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import './tailwind.css';
+import './index.css';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
-// Keep plain CSS imports consolidated above if needed
+import './index.css';
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
