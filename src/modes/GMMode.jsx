@@ -20,8 +20,14 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
 
   // Initialize from universe
   useEffect(() => {
-    const team = universe.league.find(t => t.name === selectedTeam.name);
-    setMyTeam(team);
+    if (selectedTeam && universe.league) {
+      const team = universe.league.find(t => t.name === selectedTeam.name);
+      if (team) {
+        setMyTeam(team);
+      } else {
+        console.error('Team not found in universe:', selectedTeam.name);
+      }
+    }
   }, [selectedTeam, universe]);
 
   // ============================================================================
@@ -378,6 +384,13 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
   // ============================================================================
 
   if (view === 'lineup') {
+    if (!myTeam) {
+      return (
+        <div className="min-h-screen bg-amber-50 p-4 flex items-center justify-center">
+          <div className="text-2xl font-bold text-amber-900">Loading Team Data...</div>
+        </div>
+      );
+    }
     const positionPlayers = myTeam.roster.filter(p => p.type === 'position');
     const unassigned = positionPlayers.filter(p => 
       !Object.values(lineup).some(assigned => assigned && assigned.id === p.id)
@@ -478,6 +491,15 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
   // ============================================================================
   // RENDER: HUB (Stadium Aesthetic)
   // ============================================================================
+
+  // Don't render until myTeam is loaded
+  if (!myTeam) {
+    return (
+      <div className="min-h-screen bg-amber-50 p-4 flex items-center justify-center">
+        <div className="text-2xl font-bold text-amber-900">Loading Team Data...</div>
+      </div>
+    );
+  }
 
   if (view === 'hub') {
     return (
@@ -606,6 +628,13 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
   // ============================================================================
 
   if (view === 'roster') {
+    if (!myTeam) {
+      return (
+        <div className="min-h-screen bg-amber-50 p-4 flex items-center justify-center">
+          <div className="text-2xl font-bold text-amber-900">Loading Team Data...</div>
+        </div>
+      );
+    }
     const positionPlayers = myTeam.roster.filter(p => p.type === 'position');
     const pitchers = myTeam.roster.filter(p => p.type === 'pitcher');
 
@@ -701,6 +730,13 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
   // ============================================================================
 
   if (view === 'minor-league') {
+    if (!myTeam) {
+      return (
+        <div className="min-h-screen bg-amber-50 p-4 flex items-center justify-center">
+          <div className="text-2xl font-bold text-amber-900">Loading Team Data...</div>
+        </div>
+      );
+    }
     const minorLeaguePlayers = myTeam.minorLeague || [];
 
     return (
@@ -790,6 +826,13 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
   // ============================================================================
 
   if (view === 'season-stats') {
+    if (!myTeam) {
+      return (
+        <div className="min-h-screen bg-amber-50 p-4 flex items-center justify-center">
+          <div className="text-2xl font-bold text-amber-900">Loading Team Data...</div>
+        </div>
+      );
+    }
     const positionPlayers = myTeam.roster.filter(p => p.type === 'position');
     const pitchers = myTeam.roster.filter(p => p.type === 'pitcher');
 
@@ -882,6 +925,13 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
   // ============================================================================
 
   if (view === 'simulate' && gameResult) {
+    if (!myTeam) {
+      return (
+        <div className="min-h-screen bg-amber-50 p-4 flex items-center justify-center">
+          <div className="text-2xl font-bold text-amber-900">Loading Team Data...</div>
+        </div>
+      );
+    }
     return (
       <div className="min-h-screen bg-amber-50 p-4" style={{ fontFamily: '"Courier New", monospace' }}>
         <div className="max-w-4xl mx-auto">
@@ -925,7 +975,12 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
     );
   }
 
-  return null;
+  // Fallback - should not reach here
+  return (
+    <div className="min-h-screen bg-amber-50 p-4 flex items-center justify-center">
+      <div className="text-2xl font-bold text-amber-900">Loading...</div>
+    </div>
+  );
 };
 
 export default GMMode;
