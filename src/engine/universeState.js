@@ -36,6 +36,7 @@ export class UniverseState {
       for (let i = 0; i < 9; i++) {
         const variance = () => Math.floor(Math.random() * 20) - 10;
         roster.push({
+          id: `player-${Date.now()}-${Math.random().toString(36).substr(2, 9)}-${i}`,
           name: generateName(),
           type: 'position',
           stats: {
@@ -54,6 +55,7 @@ export class UniverseState {
       for (let i = 0; i < 5; i++) {
         const variance = () => Math.floor(Math.random() * 20) - 10;
         roster.push({
+          id: `player-${Date.now()}-${Math.random().toString(36).substr(2, 9)}-${i + 9}`,
           name: generateName(),
           type: 'pitcher',
           stats: {
@@ -69,7 +71,8 @@ export class UniverseState {
       return {
         ...config,
         roster,
-        record: { wins: 0, losses: 0 }
+        record: { wins: 0, losses: 0 },
+        minorLeague: [] // Store top 3 draft picks
       };
     });
   }

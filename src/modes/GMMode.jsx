@@ -6,7 +6,6 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
   const [engine] = useState(() => new DiceEngine());
   const [view, setView] = useState('hub');
   const [myTeam, setMyTeam] = useState(null);
-  const [league, setLeague] = useState([]);
   const [draftState, setDraftState] = useState(null);
   const [season, setSeason] = useState({ 
     gamesPlayed: 0, 
@@ -21,7 +20,6 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
 
   // Initialize from universe
   useEffect(() => {
-    setLeague(universe.league);
     const team = universe.league.find(t => t.name === selectedTeam.name);
     setMyTeam(team);
   }, [selectedTeam, universe]);
@@ -64,7 +62,7 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
 
   const startDraft = () => {
     const prospects = generateProspects();
-    const draftOrder = [...league].sort(() => Math.random() - 0.5);
+    const draftOrder = [...universe.league].sort(() => Math.random() - 0.5);
     
     setDraftState({
       prospects,
@@ -91,19 +89,36 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
       picks: newPicks
     });
     
-    // Draft complete - ADD 2 picks to existing rosters
+    // Draft complete - ADD top 3 picks to minor league, rest to roster
     if (nextPick >= 16) {
-      const updatedLeague = league.map(team => {
+      // Update universe directly
+      universe.league.forEach(team => {
         const teamPicks = newPicks
           .filter(p => p.team === team.name)
-          .map(p => p.player)
-          .slice(0, 2);
+          .map(p => p.player);
         
-        return { ...team, roster: [...team.roster, ...teamPicks] };
+        // Top 3 picks go to minor league, rest go to roster
+        const top3Picks = teamPicks.slice(0, 3);
+        const remainingPicks = teamPicks.slice(3);
+        
+        // Validate roster size before adding players
+        const currentRosterSize = team.roster.length;
+        const maxRosterSize = 14;
+        const availableSlots = maxRosterSize - currentRosterSize;
+        
+        if (availableSlots < remainingPicks.length) {
+          console.warn(`Team ${team.name} roster would exceed limit. Only adding ${availableSlots} players to roster.`);
+          const validPicks = remainingPicks.slice(0, availableSlots);
+          team.roster = [...team.roster, ...validPicks];
+        } else {
+          team.roster = [...team.roster, ...remainingPicks];
+        }
+        
+        team.minorLeague = [...(team.minorLeague || []), ...top3Picks];
       });
       
-      setLeague(updatedLeague);
-      setMyTeam(updatedLeague.find(t => t.name === myTeam.name));
+      // Update myTeam reference
+      setMyTeam(universe.league.find(t => t.name === myTeam.name));
       setView('hub');
     }
   };
@@ -187,7 +202,7 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
   };
 
   const simulateGame = () => {
-    const opponents = league.filter(t => t.name !== myTeam.name);
+    const opponents = universe.league.filter(t => t.name !== myTeam.name);
     const opponent = opponents[Math.floor(Math.random() * opponents.length)];
     
     // Run 3 simulations, take most common result
@@ -205,27 +220,15 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
     const oppScore = result.team2Score;
     const won = yourScore > oppScore;
     
-    // Update records
-    const updatedLeague = league.map(team => {
-      if (team.name === myTeam.name) {
-        return { 
-          ...team, 
-          wins: won ? team.wins + 1 : team.wins, 
-          losses: won ? team.losses : team.losses + 1 
-        };
-      }
-      if (team.name === opponent.name) {
-        return { 
-          ...team, 
-          wins: won ? team.wins : team.wins + 1, 
-          losses: won ? team.losses + 1 : team.losses 
-        };
-      }
-      return team;
-    });
+    // Update records using universe method
+    if (won) {
+      universe.recordGame(myTeam.name, opponent.name);
+    } else {
+      universe.recordGame(opponent.name, myTeam.name);
+    }
     
-    setLeague(updatedLeague);
-    setMyTeam(updatedLeague.find(t => t.name === myTeam.name));
+    // Update myTeam reference
+    setMyTeam(universe.league.find(t => t.name === myTeam.name));
     
     const newGamesPlayed = season.gamesPlayed + 1;
     
@@ -377,7 +380,7 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
   if (view === 'lineup') {
     const positionPlayers = myTeam.roster.filter(p => p.type === 'position');
     const unassigned = positionPlayers.filter(p => 
-      !Object.values(lineup).some(assigned => assigned?.id === p.id)
+      !Object.values(lineup).some(assigned => assigned && assigned.id === p.id)
     );
     
     const positions = ['C', '1B', '2B', '3B', 'SS', 'LF', 'CF', 'RF', 'DH'];
@@ -487,7 +490,7 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
               <div className="text-xs tracking-widest">GENERAL MANAGER</div>
               <h1 className="text-4xl font-bold">{myTeam.city.toUpperCase()} {myTeam.name.toUpperCase()}</h1>
               <div className="text-sm text-amber-200 mt-2">
-                YEAR {season.year} | GAME {season.gamesPlayed}/{season.totalGames} | {myTeam.wins}-{myTeam.losses}
+                YEAR {season.year} | GAME {season.gamesPlayed}/{season.totalGames} | {myTeam.record.wins}-{myTeam.record.losses}
               </div>
             </div>
           </div>
@@ -520,8 +523,8 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
               <rect x="300" y="130" width="200" height="60" fill="#1F2937" stroke="#000" strokeWidth="3"/>
               <rect x="310" y="140" width="80" height="40" fill={myTeam.colors[0]}/>
               <rect x="410" y="140" width="80" height="40" fill="#4B5563"/>
-              <text x="350" y="165" textAnchor="middle" fontSize="24" fontWeight="bold" fill="#FFF">{myTeam.wins}</text>
-              <text x="450" y="165" textAnchor="middle" fontSize="24" fontWeight="bold" fill="#FFF">{myTeam.losses}</text>
+              <text x="350" y="165" textAnchor="middle" fontSize="24" fontWeight="bold" fill="#FFF">{myTeam.record.wins}</text>
+              <text x="450" y="165" textAnchor="middle" fontSize="24" fontWeight="bold" fill="#FFF">{myTeam.record.losses}</text>
               <text x="350" y="185" textAnchor="middle" fontSize="8" fill="#FFF">WINS</text>
               <text x="450" y="185" textAnchor="middle" fontSize="8" fill="#FFF">LOSSES</text>
             </svg>
@@ -562,6 +565,14 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
             >
               <div className="text-2xl font-bold mb-2">STANDINGS</div>
               <div className="text-sm">League overview</div>
+            </button>
+
+            <button
+              onClick={() => setView('minor-league')}
+              className="bg-amber-100 border-4 border-amber-900 p-6 hover:bg-amber-200"
+            >
+              <div className="text-2xl font-bold mb-2">MINOR LEAGUE</div>
+              <div className="text-sm">Top prospects ({myTeam.minorLeague?.length || 0})</div>
             </button>
           </div>
 
@@ -660,7 +671,7 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
           </div>
 
           <div className="bg-amber-100 p-6 border-4 border-amber-900 mb-4">
-            {[...league].sort((a, b) => b.wins - a.wins).map((team, idx) => (
+            {[...universe.league].sort((a, b) => b.record.wins - a.record.wins).map((team, idx) => (
               <div 
                 key={idx} 
                 className={`flex justify-between p-3 mb-2 border-2 ${team.name === myTeam.name ? 'bg-green-100 border-green-700' : 'bg-white border-amber-700'}`}
@@ -669,10 +680,98 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
                   <span className="font-bold text-2xl">{idx + 1}</span>
                   <span className="font-bold">{team.city} {team.name}</span>
                 </div>
-                <span className="text-2xl font-bold">{team.wins}-{team.losses}</span>
+                <span className="text-2xl font-bold">{team.record.wins}-{team.record.losses}</span>
               </div>
             ))}
           </div>
+
+          <button
+            onClick={() => setView('hub')}
+            className="w-full py-4 bg-amber-700 text-amber-50 border-4 border-amber-900 hover:bg-amber-800 text-xl font-bold"
+          >
+            ← BACK TO HUB
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ============================================================================
+  // RENDER: MINOR LEAGUE (Stadium Aesthetic)
+  // ============================================================================
+
+  if (view === 'minor-league') {
+    const minorLeaguePlayers = myTeam.minorLeague || [];
+
+    return (
+      <div className="min-h-screen bg-amber-50 p-4" style={{ fontFamily: '"Courier New", monospace' }}>
+        <div className="max-w-4xl mx-auto">
+          
+          <div className="bg-amber-900 text-amber-50 p-4 mb-6 border-8 border-double border-amber-950">
+            <h1 className="text-3xl font-bold text-center">{myTeam.name.toUpperCase()} MINOR LEAGUE</h1>
+            <p className="text-center text-amber-200 text-sm mt-2">Top 3 Draft Picks Storage</p>
+          </div>
+
+          {minorLeaguePlayers.length === 0 ? (
+            <div className="bg-amber-100 p-6 border-4 border-amber-900 mb-4 text-center">
+              <div className="text-2xl font-bold mb-2">NO PROSPECTS</div>
+              <div className="text-sm">Complete a draft to see your top picks here</div>
+            </div>
+          ) : (
+            <div className="bg-amber-100 p-6 border-4 border-amber-900 mb-4">
+              <h2 className="text-2xl font-bold mb-4">MINOR LEAGUE PROSPECTS ({minorLeaguePlayers.length})</h2>
+              <div className="space-y-3">
+                {minorLeaguePlayers.map((player, idx) => (
+                  <div key={idx} className="bg-white border-2 border-amber-700 p-4">
+                    <div className="flex justify-between items-center mb-2">
+                      <div className="font-bold text-lg">{player.name}</div>
+                      <div className="text-sm bg-amber-200 px-2 py-1 rounded">
+                        {player.type === 'position' ? 'POSITION PLAYER' : 'PITCHER'}
+                      </div>
+                    </div>
+                    
+                    <div className="grid grid-cols-4 gap-2 text-sm">
+                      {player.type === 'position' ? (
+                        <>
+                          <div className="text-center p-2 bg-amber-50 border border-amber-700">
+                            <div className="text-xs">HIT</div>
+                            <div className="font-bold">{player.stats.hitting}</div>
+                          </div>
+                          <div className="text-center p-2 bg-amber-50 border border-amber-700">
+                            <div className="text-xs">POW</div>
+                            <div className="font-bold">{player.stats.power}</div>
+                          </div>
+                          <div className="text-center p-2 bg-amber-50 border border-amber-700">
+                            <div className="text-xs">SPD</div>
+                            <div className="font-bold">{player.stats.speed}</div>
+                          </div>
+                          <div className="text-center p-2 bg-amber-50 border border-amber-700">
+                            <div className="text-xs">DEF</div>
+                            <div className="font-bold">{player.stats.defense}</div>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="text-center p-2 bg-amber-50 border border-amber-700">
+                            <div className="text-xs">PITCH</div>
+                            <div className="font-bold">{player.stats.pitching}</div>
+                          </div>
+                          <div className="text-center p-2 bg-amber-50 border border-amber-700">
+                            <div className="text-xs">DEF</div>
+                            <div className="font-bold">{player.stats.defense}</div>
+                          </div>
+                          <div className="col-span-2 text-center p-2 bg-amber-50 border border-amber-700">
+                            <div className="text-xs">PROSPECT</div>
+                            <div className="font-bold">READY</div>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <button
             onClick={() => setView('hub')}
@@ -803,7 +902,7 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
             <div className="grid grid-cols-2 gap-4 text-center">
               <div>
                 <div className="text-sm text-stone-600">RECORD</div>
-                <div className="text-4xl font-bold">{myTeam.wins}-{myTeam.losses}</div>
+                <div className="text-4xl font-bold">{myTeam.record.wins}-{myTeam.record.losses}</div>
               </div>
               <div>
                 <div className="text-sm text-stone-600">REMAINING</div>
