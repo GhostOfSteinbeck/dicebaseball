@@ -10,7 +10,8 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
   const [season, setSeason] = useState({ 
     gamesPlayed: 0, 
     totalGames: GAME_CONFIG.gm.seasonGames,
-    year: 1
+    year: 1,
+    schedule: [0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3] // Sequential opponents
   });
   const [gameResult, setGameResult] = useState(null);
   const [lineup, setLineup] = useState({
@@ -49,7 +50,8 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
             power: 45 + Math.floor(Math.random() * 30),
             speed: 45 + Math.floor(Math.random() * 30),
             defense: 45 + Math.floor(Math.random() * 30)
-          }
+          },
+          potential: 30 + Math.floor(Math.random() * 65) // 30-95 range
         });
       } else {
         prospects.push({
@@ -59,11 +61,20 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
           stats: {
             pitching: 45 + Math.floor(Math.random() * 30),
             defense: 45 + Math.floor(Math.random() * 30)
-          }
+          },
+          potential: 30 + Math.floor(Math.random() * 65) // 30-95 range
         });
       }
     }
     return prospects;
+  };
+
+  const evaluateProspect = (player) => {
+    if (player.type === 'position') {
+      return (player.stats.hitting + player.stats.power + player.stats.speed + player.stats.defense) / 4 + (player.potential * 0.3);
+    } else {
+      return player.stats.pitching + (player.potential * 0.3);
+    }
   };
 
   const startDraft = () => {
@@ -95,7 +106,7 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
       picks: newPicks
     });
     
-    // Draft complete - ADD top 3 picks to minor league, rest to roster
+    // Draft complete - Smart minor league management (keep best 3 prospects)
     if (nextPick >= 16) {
       // Update universe directly
       universe.league.forEach(team => {
@@ -103,24 +114,15 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
           .filter(p => p.team === team.name)
           .map(p => p.player);
         
-        // Top 3 picks go to minor league, rest go to roster
-        const top3Picks = teamPicks.slice(0, 3);
-        const remainingPicks = teamPicks.slice(3);
+        // Combine existing minor league with new picks
+        const allProspects = [...(team.minorLeague || []), ...teamPicks];
         
-        // Validate roster size before adding players
-        const currentRosterSize = team.roster.length;
-        const maxRosterSize = 14;
-        const availableSlots = maxRosterSize - currentRosterSize;
+        // Sort by evaluation score and keep only top 3
+        const sortedProspects = allProspects.sort((a, b) => evaluateProspect(b) - evaluateProspect(a));
+        team.minorLeague = sortedProspects.slice(0, 3);
         
-        if (availableSlots < remainingPicks.length) {
-          console.warn(`Team ${team.name} roster would exceed limit. Only adding ${availableSlots} players to roster.`);
-          const validPicks = remainingPicks.slice(0, availableSlots);
-          team.roster = [...team.roster, ...validPicks];
-        } else {
-          team.roster = [...team.roster, ...remainingPicks];
-        }
-        
-        team.minorLeague = [...(team.minorLeague || []), ...top3Picks];
+        // All other prospects are deleted (not added to roster)
+        console.log(`Team ${team.name}: Kept ${team.minorLeague.length} prospects, deleted ${allProspects.length - 3} others`);
       });
       
       // Update myTeam reference
@@ -207,9 +209,57 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
     return { team1Score, team2Score };
   };
 
+  const generatePlayerPerformance = (player) => {
+    if (player.type === 'position') {
+      const hits = Math.floor(Math.random() * 4) + 1; // 1-4 hits
+      const atBats = Math.floor(Math.random() * 2) + 3; // 3-4 at bats
+      const rbi = Math.floor(Math.random() * 4); // 0-3 RBI
+      const homeRuns = Math.random() > 0.7 ? 1 : 0; // 30% chance of HR
+      return `${hits}-for-${atBats}, ${rbi} RBI${homeRuns ? ', 1 HR' : ''}`;
+    } else {
+      const innings = Math.floor(Math.random() * 3) + 6; // 6-8 innings
+      const strikeouts = Math.floor(Math.random() * 6) + 3; // 3-8 K
+      const earnedRuns = Math.floor(Math.random() * 4); // 0-3 ER
+      return `${innings} IP, ${strikeouts} K, ${earnedRuns} ER`;
+    }
+  };
+
+  const simulateCPUGames = () => {
+    // Simulate games between CPU teams to keep standings realistic
+    const cpuTeams = universe.league.filter(t => t.name !== myTeam.name);
+    
+    // Each CPU team plays 1-2 games per player game to maintain realistic pace
+    for (let i = 0; i < cpuTeams.length; i++) {
+      for (let j = i + 1; j < cpuTeams.length; j++) {
+        const team1 = cpuTeams[i];
+        const team2 = cpuTeams[j];
+        
+        // Simulate 1-2 games between these teams
+        const gamesToPlay = Math.random() > 0.5 ? 2 : 1;
+        
+        for (let game = 0; game < gamesToPlay; game++) {
+          const result = runSingleSimulation(team1, team2);
+          const team1Score = result.team1Score;
+          const team2Score = result.team2Score;
+          
+          if (team1Score > team2Score) {
+            universe.recordGame(team1.name, team2.name);
+          } else if (team2Score > team1Score) {
+            universe.recordGame(team2.name, team1.name);
+          }
+          // Ties are ignored (no record update)
+        }
+      }
+    }
+  };
+
   const simulateGame = () => {
-    const opponents = universe.league.filter(t => t.name !== myTeam.name);
-    const opponent = opponents[Math.floor(Math.random() * opponents.length)];
+    // Simulate CPU games first
+    simulateCPUGames();
+    
+    // Get sequential opponent from schedule
+    const opponentIndex = season.schedule[season.gamesPlayed];
+    const opponent = universe.league[opponentIndex];
     
     // Run 3 simulations, take most common result
     const sims = [
@@ -226,6 +276,20 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
     const oppScore = result.team2Score;
     const won = yourScore > oppScore;
     
+    // Generate player of the game if won
+    let playerOfTheGame = null;
+    if (won) {
+      const lineupPlayers = Object.values(lineup).filter(p => p !== null);
+      if (lineupPlayers.length > 0) {
+        const randomPlayer = lineupPlayers[Math.floor(Math.random() * lineupPlayers.length)];
+        const performance = generatePlayerPerformance(randomPlayer);
+        playerOfTheGame = {
+          player: randomPlayer,
+          performance: performance
+        };
+      }
+    }
+    
     // Update records using universe method
     if (won) {
       universe.recordGame(myTeam.name, opponent.name);
@@ -240,14 +304,20 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
     
     // Check if season is over
     if (newGamesPlayed >= season.totalGames) {
-      setSeason({ gamesPlayed: 0, totalGames: season.totalGames, year: season.year + 1 });
-      setGameResult({ opponent: opponent.name, yourScore, oppScore, won, seasonOver: true });
+      setSeason({ 
+        gamesPlayed: 0, 
+        totalGames: season.totalGames, 
+        year: season.year + 1,
+        schedule: [0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3] // New schedule for next year
+      });
+      setGameResult({ opponent: opponent.name, yourScore, oppScore, won, seasonOver: true, playerOfTheGame });
     } else {
       setSeason({ ...season, gamesPlayed: newGamesPlayed });
-      setGameResult({ opponent: opponent.name, yourScore, oppScore, won, seasonOver: false });
+      setGameResult({ opponent: opponent.name, yourScore, oppScore, won, seasonOver: false, playerOfTheGame });
     }
     
-    setView('simulate');
+    // Stay on hub view, show result overlay
+    setView('hub');
   };
 
   // ============================================================================
@@ -366,8 +436,13 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
                         <>
                           <div>PIT: {prospect.stats.pitching}</div>
                           <div>DEF: {prospect.stats.defense}</div>
+                          <div></div>
+                          <div></div>
                         </>
                       )}
+                    </div>
+                    <div className="text-xs text-amber-400 mt-1">
+                      POTENTIAL: {prospect.potential}
                     </div>
                   </div>
                 ))}
@@ -504,6 +579,16 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
   if (view === 'hub') {
     return (
       <div className="min-h-screen bg-amber-50 p-4" style={{ fontFamily: '"Courier New", monospace' }}>
+        <style>{`
+          @keyframes firework {
+            0% { transform: translateY(0) scale(1); opacity: 1; }
+            50% { transform: translateY(-100px) scale(1.5); opacity: 0.8; }
+            100% { transform: translateY(-200px) scale(0.5); opacity: 0; }
+          }
+          .animate-firework {
+            animation: firework ease-out forwards;
+          }
+        `}</style>
         <div className="max-w-4xl mx-auto">
           
           {/* Header */}
@@ -550,6 +635,64 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
               <text x="350" y="185" textAnchor="middle" fontSize="8" fill="#FFF">WINS</text>
               <text x="450" y="185" textAnchor="middle" fontSize="8" fill="#FFF">LOSSES</text>
             </svg>
+            
+            {/* Game Result Overlay */}
+            {gameResult && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className={`p-8 text-center border-8 border-double ${gameResult.won ? 'bg-green-100 border-green-700' : 'bg-red-100 border-red-700'}`}>
+                  <div className="text-6xl font-bold mb-4">
+                    {gameResult.won ? '✓ VICTORY' : '✗ DEFEAT'}
+                  </div>
+                  <div className="text-4xl mb-2">
+                    {myTeam.name} {gameResult.yourScore}
+                  </div>
+                  <div className="text-4xl mb-4">
+                    {gameResult.opponent} {gameResult.oppScore}
+                  </div>
+                  
+                  {/* Player of the Game */}
+                  {gameResult.won && gameResult.playerOfTheGame && (
+                    <div className="bg-amber-200 p-4 border-4 border-amber-800 mb-4">
+                      <div className="text-2xl font-bold text-amber-900">PLAYER OF THE GAME</div>
+                      <div className="text-xl font-bold">{gameResult.playerOfTheGame.player.name}</div>
+                      <div className="text-lg">{gameResult.playerOfTheGame.performance}</div>
+                    </div>
+                  )}
+                  
+                  <button
+                    onClick={() => setGameResult(null)}
+                    className="bg-amber-700 text-amber-50 py-3 px-8 text-xl font-bold border-4 border-amber-900 hover:bg-amber-800"
+                  >
+                    CONTINUE
+                  </button>
+                </div>
+              </div>
+            )}
+            
+            {/* Fireworks Animation */}
+            {gameResult && gameResult.won && (
+              <div className="absolute inset-0 pointer-events-none">
+                {[...Array(8)].map((_, i) => (
+                  <div
+                    key={i}
+                    className="absolute animate-firework"
+                    style={{
+                      left: `${300 + (i * 25)}px`,
+                      top: '200px',
+                      animationDelay: `${i * 0.2}s`,
+                      animationDuration: '3s'
+                    }}
+                  >
+                    <div 
+                      className="w-4 h-4 rounded-full"
+                      style={{
+                        backgroundColor: ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7DC6F'][i]
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Action Buttons */}
@@ -637,41 +780,116 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
     }
     const positionPlayers = myTeam.roster.filter(p => p.type === 'position');
     const pitchers = myTeam.roster.filter(p => p.type === 'pitcher');
+    const minorLeaguePlayers = myTeam.minorLeague || [];
 
     return (
       <div className="min-h-screen bg-amber-50 p-4" style={{ fontFamily: '"Courier New", monospace' }}>
-        <div className="max-w-4xl mx-auto">
+        <div className="max-w-6xl mx-auto">
           
           <div className="bg-amber-900 text-amber-50 p-4 mb-6 border-8 border-double border-amber-950">
-            <h1 className="text-3xl font-bold text-center">{myTeam.name.toUpperCase()} ROSTER</h1>
+            <h1 className="text-3xl font-bold text-center">{myTeam.name.toUpperCase()} ROSTER & PROJECTIONS</h1>
+            <p className="text-center text-amber-200 text-sm mt-2">Season {season.year} Projected Stats</p>
           </div>
 
-          <div className="bg-amber-100 p-6 border-4 border-amber-900 mb-4">
-            <h2 className="text-2xl font-bold mb-4">POSITION PLAYERS ({positionPlayers.length})</h2>
-            <div className="space-y-2">
-              {positionPlayers.map((p, idx) => (
-                <div key={idx} className="bg-white border-2 border-amber-700 p-3 flex justify-between items-center">
-                  <div className="font-bold">{p.name}</div>
-                  <div className="text-sm">
-                    HIT:{p.stats.hitting} POW:{p.stats.power} SPD:{p.stats.speed} DEF:{p.stats.defense}
+          {/* Active Roster */}
+          <div className="bg-amber-100 p-6 border-4 border-amber-900 mb-6">
+            <h2 className="text-2xl font-bold mb-4">ACTIVE ROSTER</h2>
+            
+            <div className="mb-4">
+              <h3 className="text-xl font-bold mb-3">POSITION PLAYERS ({positionPlayers.length})</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b-2 border-amber-900">
+                      <th className="text-left p-2">NAME</th>
+                      <th className="p-2">POS</th>
+                      <th className="p-2">PROJ AVG</th>
+                      <th className="p-2">PROJ HR</th>
+                      <th className="p-2">PROJ SB</th>
+                      <th className="p-2">RATING</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {positionPlayers.map((p, idx) => {
+                      const stats = calculateSeasonStats(p);
+                      const position = Object.entries(lineup).find(([pos, player]) => player?.id === p.id)?.[0] || 'BENCH';
+                      return (
+                        <tr key={idx} className="border-b border-amber-700">
+                          <td className="p-2 font-bold">{p.name}</td>
+                          <td className="p-2 text-center">{position}</td>
+                          <td className="p-2 text-center">{stats.avg}</td>
+                          <td className="p-2 text-center">{stats.homeRuns}</td>
+                          <td className="p-2 text-center">{stats.stolenBases}</td>
+                          <td className="p-2 text-center">
+                            {Math.round((p.stats.hitting + p.stats.power + p.stats.speed + p.stats.defense) / 4)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-xl font-bold mb-3">PITCHERS ({pitchers.length})</h3>
+              <div className="space-y-2">
+                {pitchers.map((p, idx) => (
+                  <div key={idx} className="bg-white border-2 border-amber-700 p-3 flex justify-between items-center">
+                    <div className="font-bold">{p.name}</div>
+                    <div className="text-sm">
+                      RATING: {p.stats.pitching} | DEF: {p.stats.defense}
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           </div>
 
-          <div className="bg-amber-100 p-6 border-4 border-amber-900 mb-4">
-            <h2 className="text-2xl font-bold mb-4">PITCHERS ({pitchers.length})</h2>
-            <div className="space-y-2">
-              {pitchers.map((p, idx) => (
-                <div key={idx} className="bg-white border-2 border-amber-700 p-3 flex justify-between items-center">
-                  <div className="font-bold">{p.name}</div>
-                  <div className="text-sm">
-                    PIT:{p.stats.pitching} DEF:{p.stats.defense}
-                  </div>
-                </div>
-              ))}
-            </div>
+          {/* Minor League Prospects */}
+          <div className="bg-amber-100 p-6 border-4 border-amber-900 mb-6">
+            <h2 className="text-2xl font-bold mb-4">MINOR LEAGUE PROSPECTS ({minorLeaguePlayers.length})</h2>
+            
+            {minorLeaguePlayers.length === 0 ? (
+              <div className="text-center text-gray-600 py-8">
+                No prospects in minor league system
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b-2 border-amber-900">
+                      <th className="text-left p-2">NAME</th>
+                      <th className="p-2">TYPE</th>
+                      <th className="p-2">PROJ AVG</th>
+                      <th className="p-2">PROJ HR</th>
+                      <th className="p-2">PROJ SB</th>
+                      <th className="p-2">POTENTIAL</th>
+                      <th className="p-2">OVERALL</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {minorLeaguePlayers.map((p, idx) => {
+                      const stats = calculateSeasonStats(p);
+                      const overall = p.type === 'position' 
+                        ? Math.round((p.stats.hitting + p.stats.power + p.stats.speed + p.stats.defense) / 4)
+                        : p.stats.pitching;
+                      return (
+                        <tr key={idx} className="border-b border-amber-700">
+                          <td className="p-2 font-bold">{p.name}</td>
+                          <td className="p-2 text-center">{p.type === 'position' ? 'POS' : 'PIT'}</td>
+                          <td className="p-2 text-center">{stats.avg}</td>
+                          <td className="p-2 text-center">{stats.homeRuns}</td>
+                          <td className="p-2 text-center">{stats.stolenBases}</td>
+                          <td className="p-2 text-center font-bold text-blue-700">{p.potential}</td>
+                          <td className="p-2 text-center">{overall}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
 
           <button
@@ -707,6 +925,9 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
               >
                 <div className="flex items-center gap-4">
                   <span className="font-bold text-2xl">{idx + 1}</span>
+                  <div className="w-10 h-10 flex items-center justify-center">
+                    {team.logo(team.colors[0])}
+                  </div>
                   <span className="font-bold">{team.city} {team.name}</span>
                 </div>
                 <span className="text-2xl font-bold">{team.record.wins}-{team.record.losses}</span>
@@ -920,60 +1141,6 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
     );
   }
 
-  // ============================================================================
-  // RENDER: GAME RESULT (Stadium Aesthetic)
-  // ============================================================================
-
-  if (view === 'simulate' && gameResult) {
-    if (!myTeam) {
-      return (
-        <div className="min-h-screen bg-amber-50 p-4 flex items-center justify-center">
-          <div className="text-2xl font-bold text-amber-900">Loading Team Data...</div>
-        </div>
-      );
-    }
-    return (
-      <div className="min-h-screen bg-amber-50 p-4" style={{ fontFamily: '"Courier New", monospace' }}>
-        <div className="max-w-4xl mx-auto">
-          
-          <div className={`p-8 mb-6 border-8 border-double text-center ${gameResult.won ? 'bg-green-100 border-green-700' : 'bg-red-100 border-red-700'}`}>
-            <div className="text-6xl font-bold mb-4">
-              {gameResult.won ? '✓ VICTORY' : '✗ DEFEAT'}
-            </div>
-            <div className="text-4xl mb-2">
-              {myTeam.name} {gameResult.yourScore}
-            </div>
-            <div className="text-4xl">
-              {gameResult.opponent} {gameResult.oppScore}
-            </div>
-          </div>
-
-          <div className="bg-amber-100 p-6 border-4 border-amber-900 mb-6">
-            <div className="grid grid-cols-2 gap-4 text-center">
-              <div>
-                <div className="text-sm text-stone-600">RECORD</div>
-                <div className="text-4xl font-bold">{myTeam.record.wins}-{myTeam.record.losses}</div>
-              </div>
-              <div>
-                <div className="text-sm text-stone-600">REMAINING</div>
-                <div className="text-4xl font-bold">{season.totalGames - season.gamesPlayed}</div>
-              </div>
-            </div>
-          </div>
-
-          <button
-            onClick={() => {
-              setGameResult(null);
-              setView('hub');
-            }}
-            className="w-full py-6 text-2xl font-bold bg-amber-700 text-amber-50 border-4 border-amber-900 hover:bg-amber-800"
-          >
-            CONTINUE →
-          </button>
-        </div>
-      </div>
-    );
-  }
 
   // Fallback - should not reach here
   return (
