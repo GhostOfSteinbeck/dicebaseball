@@ -11,7 +11,8 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
     gamesPlayed: 0, 
     totalGames: GAME_CONFIG.gm.seasonGames,
     year: 1,
-    schedule: [0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3] // Sequential opponents
+    schedule: [0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3], // Sequential opponents
+    seasonEnded: false // Track if season just ended for draft trigger
   });
   const [gameResult, setGameResult] = useState(null);
   const [lineup, setLineup] = useState({
@@ -25,6 +26,20 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
       const team = universe.league.find(t => t.name === selectedTeam.name);
       if (team) {
         setMyTeam(team);
+        
+        // Create schedule excluding player's own team
+        const myTeamIndex = universe.league.findIndex(t => t.name === selectedTeam.name);
+        const opponentIndices = universe.league
+          .map((_, idx) => idx)
+          .filter(idx => idx !== myTeamIndex);
+        
+        // Create 20-game schedule cycling through opponents
+        const newSchedule = [];
+        for (let i = 0; i < 20; i++) {
+          newSchedule.push(opponentIndices[i % opponentIndices.length]);
+        }
+        
+        setSeason(prev => ({ ...prev, schedule: newSchedule }));
       } else {
         console.error('Team not found in universe:', selectedTeam.name);
       }
@@ -88,6 +103,11 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
       round: 1,
       picks: []
     });
+    
+    // Clear season ended flag
+    setSeason(prev => ({ ...prev, seasonEnded: false }));
+    
+    setView('draft');
   };
 
   const makePick = (prospect) => {
@@ -198,13 +218,32 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
     const team2Offense = calculateTeamStrength(team2, true);
     const team2Defense = calculateTeamStrength(team2, false);
     
-    // Score = offense strength - opponent defense + randomness
-    const team1Score = Math.max(0, Math.floor(
-      (team1Offense - team2Defense) / 15 + Math.random() * 8
+    // Realistic baseball scoring: base 3 runs + team difference + small randomness
+    let team1Score = Math.max(0, Math.floor(
+      3 + (team1Offense - team2Defense) / 35 + (Math.random() * 4 - 2)
     ));
-    const team2Score = Math.max(0, Math.floor(
-      (team2Offense - team1Defense) / 15 + Math.random() * 8
+    let team2Score = Math.max(0, Math.floor(
+      3 + (team2Offense - team1Defense) / 35 + (Math.random() * 4 - 2)
     ));
+    
+    // Tie-breaker: Use pitching stats to determine winner
+    if (team1Score === team2Score) {
+      const team1Pitching = team1.roster
+        .filter(p => p.type === 'pitcher')
+        .reduce((sum, p) => sum + p.stats.pitching, 0);
+      const team2Pitching = team2.roster
+        .filter(p => p.type === 'pitcher')
+        .reduce((sum, p) => sum + p.stats.pitching, 0);
+      
+      if (team1Pitching > team2Pitching) {
+        team1Score++;
+      } else if (team2Pitching > team1Pitching) {
+        team2Score++;
+      } else {
+        // Ultra-rare: random winner if pitching also tied
+        Math.random() > 0.5 ? team1Score++ : team2Score++;
+      }
+    }
     
     return { team1Score, team2Score };
   };
@@ -225,35 +264,43 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
   };
 
   const simulateCPUGames = () => {
-    // Simulate games between CPU teams to keep standings realistic
+    // 8 teams total = 4 games happening simultaneously each round
+    // YOUR game + 3 CPU games = 4 parallel games
+    // Each team plays exactly 20 games over the season
     const cpuTeams = universe.league.filter(t => t.name !== myTeam.name);
     
-    // Each CPU team plays 1-2 games per player game to maintain realistic pace
-    for (let i = 0; i < cpuTeams.length; i++) {
-      for (let j = i + 1; j < cpuTeams.length; j++) {
-        const team1 = cpuTeams[i];
-        const team2 = cpuTeams[j];
-        
-        // Simulate 1-2 games between these teams
-        const gamesToPlay = Math.random() > 0.5 ? 2 : 1;
-        
-        for (let game = 0; game < gamesToPlay; game++) {
-          const result = runSingleSimulation(team1, team2);
-          const team1Score = result.team1Score;
-          const team2Score = result.team2Score;
-          
-          if (team1Score > team2Score) {
-            universe.recordGame(team1.name, team2.name);
-          } else if (team2Score > team1Score) {
-            universe.recordGame(team2.name, team1.name);
-          }
-          // Ties are ignored (no record update)
-        }
+    // Shuffle CPU teams for random matchups
+    const shuffled = [...cpuTeams].sort(() => Math.random() - 0.5);
+    
+    // Create 3 matchups from 7 teams (6 teams play, 1 sits out)
+    const matchups = [];
+    for (let i = 0; i < 6; i += 2) {
+      if (i + 1 < shuffled.length) {
+        matchups.push([shuffled[i], shuffled[i + 1]]);
       }
     }
+    
+    // Simulate the 3 CPU games
+    matchups.forEach(([team1, team2]) => {
+      const result = runSingleSimulation(team1, team2);
+      const team1Score = result.team1Score;
+      const team2Score = result.team2Score;
+      
+      if (team1Score > team2Score) {
+        universe.recordGame(team1.name, team2.name);
+      } else if (team2Score > team1Score) {
+        universe.recordGame(team2.name, team1.name);
+      }
+      // No ties with new tie-breaker system
+    });
   };
 
   const simulateGame = () => {
+    // Clear season ended flag when starting new season
+    if (season.seasonEnded) {
+      setSeason(prev => ({ ...prev, seasonEnded: false }));
+    }
+    
     // Simulate CPU games first
     simulateCPUGames();
     
@@ -304,11 +351,29 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
     
     // Check if season is over
     if (newGamesPlayed >= season.totalGames) {
+      // Reset all team records to 0-0 for new season
+      universe.league.forEach(team => {
+        team.record.wins = 0;
+        team.record.losses = 0;
+      });
+      
+      // Create new schedule excluding player's team
+      const myTeamIndex = universe.league.findIndex(t => t.name === myTeam.name);
+      const opponentIndices = universe.league
+        .map((_, idx) => idx)
+        .filter(idx => idx !== myTeamIndex);
+      
+      const newSchedule = [];
+      for (let i = 0; i < 20; i++) {
+        newSchedule.push(opponentIndices[i % opponentIndices.length]);
+      }
+      
       setSeason({ 
         gamesPlayed: 0, 
         totalGames: season.totalGames, 
         year: season.year + 1,
-        schedule: [0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3] // New schedule for next year
+        schedule: newSchedule,
+        seasonEnded: true
       });
       setGameResult({ opponent: opponent.name, yourScore, oppScore, won, seasonOver: true, playerOfTheGame });
     } else {
@@ -742,7 +807,7 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
           </div>
 
           {/* Season over - go to draft or stats */}
-          {season.gamesPlayed >= season.totalGames && (
+          {season.seasonEnded && (
             <div className="bg-green-100 border-4 border-green-700 p-6 text-center mb-4">
               <div className="text-2xl font-bold mb-4">SEASON {season.year} COMPLETE!</div>
               <div className="grid grid-cols-2 gap-4">

@@ -8,7 +8,7 @@ import LeagueGenerator from './modes/LeagueGenerator';
 function App() {
   const [universe] = useState(() => new UniverseState());
   const [screen, setScreen] = useState('menu');
-  const [selectedTeam] = useState(() => universe.league[0]);
+  const [selectedTeam, setSelectedTeam] = useState(null);
   
 
   
@@ -41,7 +41,7 @@ function App() {
               </div>
             </div>
             
-            <div onClick={() => setScreen('gm-mode')} className="bg-amber-100 border-4 border-amber-900 p-8 cursor-pointer hover:bg-amber-200 transition-all hover:scale-105">
+            <div onClick={() => setScreen('gm-select')} className="bg-amber-100 border-4 border-amber-900 p-8 cursor-pointer hover:bg-amber-200 transition-all hover:scale-105">
               <div className="border-2 border-dashed border-amber-700 p-6">
                 <div className="text-center">
                   <div className="text-xs tracking-widest text-amber-900 mb-2">⭐ ADMIT ONE ⭐</div>
@@ -133,6 +133,53 @@ function App() {
     );
   }
 
+  
+  // GM Team Selection
+  if (screen === 'gm-select') {
+    return (
+      <div className="min-h-screen bg-amber-50 p-8">
+        <div className="max-w-6xl mx-auto">
+          <div className="bg-amber-900 text-amber-50 p-6 mb-6 border-8 border-double border-amber-950">
+            <h1 className="text-4xl font-bold text-center">SELECT YOUR FRANCHISE</h1>
+            <p className="text-center text-amber-200 mt-2">Choose a team to manage</p>
+          </div>
+          
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-6">
+            {universe.league.map((team, idx) => (
+              <div 
+                key={idx}
+                onClick={() => {
+                  setSelectedTeam(team);
+                  setScreen('gm-mode');
+                }}
+                className="bg-amber-100 border-4 border-amber-900 p-6 cursor-pointer hover:bg-amber-200 transition-all hover:scale-105"
+              >
+                <div className="flex flex-col items-center">
+                  <div className="w-20 h-20 mb-3">
+                    {team.logo(team.colors[0])}
+                  </div>
+                  <div className="text-center">
+                    <div className="font-bold text-lg">{team.city}</div>
+                    <div className="font-bold text-xl">{team.name}</div>
+                    <div className="text-sm text-stone-600 mt-2">
+                      {team.record.wins}-{team.record.losses}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+          
+          <button
+            onClick={() => setScreen('menu')}
+            className="w-full py-4 bg-stone-600 text-amber-50 border-4 border-amber-900 hover:bg-stone-700 text-xl font-bold"
+          >
+            ← BACK TO MENU
+          </button>
+        </div>
+      </div>
+    );
+  }
   
   if (screen === 'gm-mode') {
     return (
