@@ -11,7 +11,7 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
     gamesPlayed: 0, 
     totalGames: GAME_CONFIG.gm.seasonGames,
     year: 1,
-    schedule: [0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3], // Sequential opponents
+    schedule: [], // Will be array of rounds, each round has 4 matchup pairs
     seasonEnded: false // Track if season just ended for draft trigger
   });
   const [gameResult, setGameResult] = useState(null);
@@ -19,6 +19,46 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
     C: null, '1B': null, '2B': null, '3B': null, SS: null,
     LF: null, CF: null, RF: null, DH: null
   });
+  const [promotionCandidate, setPromotionCandidate] = useState(null);
+  const [selectedToCut, setSelectedToCut] = useState(null);
+
+  // ============================================================================
+  // SCHEDULE GENERATION - Round-robin for all 8 teams (exactly 20 games each)
+  // ============================================================================
+
+  const generateFullLeagueSchedule = () => {
+    // Round-robin scheduling for 8 teams
+    // Each round has 4 matchups (all 8 teams play)
+    // 20 rounds total = 20 games per team
+    const schedule = [];
+    const teams = [0, 1, 2, 3, 4, 5, 6, 7];
+    
+    // Use circle method for round-robin
+    // Fix one team (team 0), rotate others
+    for (let round = 0; round < 20; round++) {
+      const roundMatches = [];
+      const rotated = [...teams];
+      
+      // Rotate teams (keep index 0 fixed, rotate 1-7)
+      if (round > 0) {
+        const toRotate = rotated.slice(1);
+        for (let i = 0; i < round % 7; i++) {
+          toRotate.unshift(toRotate.pop());
+        }
+        rotated.splice(1, 7, ...toRotate);
+      }
+      
+      // Create 4 matchups for this round
+      // Pair teams: 0-7, 1-6, 2-5, 3-4
+      for (let i = 0; i < 4; i++) {
+        roundMatches.push([rotated[i], rotated[7 - i]]);
+      }
+      
+      schedule.push(roundMatches);
+    }
+    
+    return schedule;
+  };
 
   // Initialize from universe
   useEffect(() => {
@@ -27,18 +67,8 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
       if (team) {
         setMyTeam(team);
         
-        // Create schedule excluding player's own team
-        const myTeamIndex = universe.league.findIndex(t => t.name === selectedTeam.name);
-        const opponentIndices = universe.league
-          .map((_, idx) => idx)
-          .filter(idx => idx !== myTeamIndex);
-        
-        // Create 20-game schedule cycling through opponents
-        const newSchedule = [];
-        for (let i = 0; i < 20; i++) {
-          newSchedule.push(opponentIndices[i % opponentIndices.length]);
-        }
-        
+        // Generate complete league schedule
+        const newSchedule = generateFullLeagueSchedule();
         setSeason(prev => ({ ...prev, schedule: newSchedule }));
       } else {
         console.error('Team not found in universe:', selectedTeam.name);
@@ -141,12 +171,30 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
         const sortedProspects = allProspects.sort((a, b) => evaluateProspect(b) - evaluateProspect(a));
         team.minorLeague = sortedProspects.slice(0, 3);
         
+        // Reset records for new season
+        team.record.wins = 0;
+        team.record.losses = 0;
+        
         // All other prospects are deleted (not added to roster)
         console.log(`Team ${team.name}: Kept ${team.minorLeague.length} prospects, deleted ${allProspects.length - 3} others`);
       });
       
       // Update myTeam reference
-      setMyTeam(universe.league.find(t => t.name === myTeam.name));
+      const updatedTeam = universe.league.find(t => t.name === myTeam.name);
+      setMyTeam(updatedTeam);
+      
+      // Generate new schedule for the new season
+      const newSchedule = generateFullLeagueSchedule();
+      
+      // Start new season
+      setSeason({
+        gamesPlayed: 0,
+        totalGames: GAME_CONFIG.gm.seasonGames,
+        year: season.year + 1,
+        schedule: newSchedule,
+        seasonEnded: false
+      });
+      
       setView('hub');
     }
   };
@@ -263,36 +311,41 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
     }
   };
 
-  const simulateCPUGames = () => {
-    // 8 teams total = 4 games happening simultaneously each round
-    // YOUR game + 3 CPU games = 4 parallel games
-    // Each team plays exactly 20 games over the season
-    const cpuTeams = universe.league.filter(t => t.name !== myTeam.name);
+  const simulateScheduledGames = (currentRound) => {
+    // Get all 4 matchups for this round from the schedule
+    const roundMatchups = season.schedule[currentRound];
     
-    // Shuffle CPU teams for random matchups
-    const shuffled = [...cpuTeams].sort(() => Math.random() - 0.5);
-    
-    // Create 3 matchups from 7 teams (6 teams play, 1 sits out)
-    const matchups = [];
-    for (let i = 0; i < 6; i += 2) {
-      if (i + 1 < shuffled.length) {
-        matchups.push([shuffled[i], shuffled[i + 1]]);
-      }
+    if (!roundMatchups) {
+      console.error('No matchups found for round', currentRound);
+      return null;
     }
     
-    // Simulate the 3 CPU games
-    matchups.forEach(([team1, team2]) => {
-      const result = runSingleSimulation(team1, team2);
-      const team1Score = result.team1Score;
-      const team2Score = result.team2Score;
+    // Find which matchup includes the player's team
+    const myTeamIndex = universe.league.findIndex(t => t.name === myTeam.name);
+    let playerMatchup = null;
+    
+    // Simulate all 4 games in this round
+    roundMatchups.forEach(([team1Idx, team2Idx]) => {
+      const team1 = universe.league[team1Idx];
+      const team2 = universe.league[team2Idx];
       
-      if (team1Score > team2Score) {
+      // Skip player's matchup for now, we'll return it
+      if (team1Idx === myTeamIndex || team2Idx === myTeamIndex) {
+        playerMatchup = { team1, team2, team1Idx, team2Idx };
+        return;
+      }
+      
+      // Simulate CPU vs CPU game
+      const result = runSingleSimulation(team1, team2);
+      
+      if (result.team1Score > result.team2Score) {
         universe.recordGame(team1.name, team2.name);
-      } else if (team2Score > team1Score) {
+      } else {
         universe.recordGame(team2.name, team1.name);
       }
-      // No ties with new tie-breaker system
     });
+    
+    return playerMatchup;
   };
 
   const simulateGame = () => {
@@ -301,14 +354,18 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
       setSeason(prev => ({ ...prev, seasonEnded: false }));
     }
     
-    // Simulate CPU games first
-    simulateCPUGames();
+    // Get all games for this round and simulate them
+    const playerMatchup = simulateScheduledGames(season.gamesPlayed);
     
-    // Get sequential opponent from schedule
-    const opponentIndex = season.schedule[season.gamesPlayed];
-    const opponent = universe.league[opponentIndex];
+    if (!playerMatchup) {
+      console.error('Could not find player matchup for round', season.gamesPlayed);
+      return;
+    }
     
-    // Run 3 simulations, take most common result
+    // Determine opponent (the team that isn't myTeam)
+    const opponent = playerMatchup.team1.name === myTeam.name ? playerMatchup.team2 : playerMatchup.team1;
+    
+    // Run 3 simulations for player's game, take median result
     const sims = [
       runSingleSimulation(myTeam, opponent),
       runSingleSimulation(myTeam, opponent),
@@ -351,38 +408,23 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
     
     // Check if season is over
     if (newGamesPlayed >= season.totalGames) {
-      // Reset all team records to 0-0 for new season
-      universe.league.forEach(team => {
-        team.record.wins = 0;
-        team.record.losses = 0;
-      });
-      
-      // Create new schedule excluding player's team
-      const myTeamIndex = universe.league.findIndex(t => t.name === myTeam.name);
-      const opponentIndices = universe.league
-        .map((_, idx) => idx)
-        .filter(idx => idx !== myTeamIndex);
-      
-      const newSchedule = [];
-      for (let i = 0; i < 20; i++) {
-        newSchedule.push(opponentIndices[i % opponentIndices.length]);
-      }
-      
+      // Store final standings before reset
       setSeason({ 
-        gamesPlayed: 0, 
+        gamesPlayed: newGamesPlayed, 
         totalGames: season.totalGames, 
-        year: season.year + 1,
-        schedule: newSchedule,
+        year: season.year,
+        schedule: season.schedule,
         seasonEnded: true
       });
       setGameResult({ opponent: opponent.name, yourScore, oppScore, won, seasonOver: true, playerOfTheGame });
+      // Go to mandatory season-end screen
+      setView('season-end');
     } else {
       setSeason({ ...season, gamesPlayed: newGamesPlayed });
       setGameResult({ opponent: opponent.name, yourScore, oppScore, won, seasonOver: false, playerOfTheGame });
+      // Stay on hub view, show result overlay
+      setView('hub');
     }
-    
-    // Stay on hub view, show result overlay
-    setView('hub');
   };
 
   // ============================================================================
@@ -805,27 +847,6 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
               <div className="text-sm">Top prospects ({myTeam.minorLeague?.length || 0})</div>
             </button>
           </div>
-
-          {/* Season over - go to draft or stats */}
-          {season.seasonEnded && (
-            <div className="bg-green-100 border-4 border-green-700 p-6 text-center mb-4">
-              <div className="text-2xl font-bold mb-4">SEASON {season.year} COMPLETE!</div>
-              <div className="grid grid-cols-2 gap-4">
-                <button
-                  onClick={() => setView('season-stats')}
-                  className="bg-amber-700 text-amber-50 py-4 text-xl font-bold border-4 border-amber-900 hover:bg-amber-800"
-                >
-                  VIEW SEASON STATS
-                </button>
-                <button
-                  onClick={startDraft}
-                  className="bg-amber-700 text-amber-50 py-4 text-xl font-bold border-4 border-amber-900 hover:bg-amber-800"
-                >
-                  START YEAR {season.year + 1} DRAFT
-                </button>
-              </div>
-            </div>
-          )}
         </div>
       </div>
     );
@@ -1052,7 +1073,7 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
                       </div>
                     </div>
                     
-                    <div className="grid grid-cols-4 gap-2 text-sm">
+                    <div className="grid grid-cols-4 gap-2 text-sm mb-3">
                       {player.type === 'position' ? (
                         <>
                           <div className="text-center p-2 bg-amber-50 border border-amber-700">
@@ -1083,12 +1104,22 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
                             <div className="font-bold">{player.stats.defense}</div>
                           </div>
                           <div className="col-span-2 text-center p-2 bg-amber-50 border border-amber-700">
-                            <div className="text-xs">PROSPECT</div>
-                            <div className="font-bold">READY</div>
+                            <div className="text-xs">POTENTIAL</div>
+                            <div className="font-bold">{player.potential}</div>
                           </div>
                         </>
                       )}
                     </div>
+                    
+                    <button
+                      onClick={() => {
+                        setPromotionCandidate(player);
+                        setView('promote-prospect');
+                      }}
+                      className="w-full py-2 bg-green-700 text-amber-50 border-2 border-amber-900 hover:bg-green-800 font-bold"
+                    >
+                      ⬆ PROMOTE TO MAJORS
+                    </button>
                   </div>
                 ))}
               </div>
@@ -1101,6 +1132,273 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
           >
             ← BACK TO HUB
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ============================================================================
+  // RENDER: PROMOTE PROSPECT (DOS Terminal)
+  // ============================================================================
+
+  if (view === 'promote-prospect') {
+    if (!myTeam || !promotionCandidate) {
+      return (
+        <div className="min-h-screen bg-amber-50 p-4 flex items-center justify-center">
+          <div className="text-2xl font-bold text-amber-900">Loading...</div>
+        </div>
+      );
+    }
+
+    const executePromotion = () => {
+      if (!selectedToCut) {
+        alert('Please select a player to cut from the roster');
+        return;
+      }
+
+      // Remove the cut player from roster
+      const newRoster = myTeam.roster.filter(p => p.id !== selectedToCut.id);
+      
+      // Add the promoted prospect to roster (without potential field for active players)
+      const promotedPlayer = { ...promotionCandidate };
+      delete promotedPlayer.potential; // Remove potential field for active roster
+      newRoster.push(promotedPlayer);
+      
+      // Update team in universe
+      const teamInUniverse = universe.league.find(t => t.name === myTeam.name);
+      teamInUniverse.roster = newRoster;
+      
+      // Remove prospect from minor league
+      teamInUniverse.minorLeague = teamInUniverse.minorLeague.filter(p => p.id !== promotionCandidate.id);
+      
+      // Update local state
+      setMyTeam(teamInUniverse);
+      setPromotionCandidate(null);
+      setSelectedToCut(null);
+      
+      // Return to hub
+      setView('hub');
+    };
+
+    return (
+      <div className="min-h-screen bg-black text-green-400 p-4 font-mono">
+        <div className="max-w-6xl mx-auto">
+          
+          <div className="border-4 border-green-400 p-4 mb-6">
+            <pre className="text-center">
+{`╔════════════════════════════════════════╗
+║     ROSTER MANAGEMENT PROTOCOL         ║
+║       [PROMOTE FROM MINORS]            ║
+╚════════════════════════════════════════╝`}
+            </pre>
+          </div>
+
+          {/* Prospect to Promote */}
+          <div className="border-4 border-green-400 p-4 mb-6">
+            <div className="text-amber-400 mb-3">PROMOTING TO ACTIVE ROSTER:</div>
+            <div className="border-2 border-green-400 p-3">
+              <div className="flex justify-between mb-2">
+                <span className="text-xl font-bold">{promotionCandidate.name}</span>
+                <span>[{promotionCandidate.type === 'position' ? 'POSITION' : 'PITCHER'}]</span>
+              </div>
+              <div className="text-xs grid grid-cols-4 gap-2">
+                {promotionCandidate.type === 'position' ? (
+                  <>
+                    <div>HIT: {promotionCandidate.stats.hitting}</div>
+                    <div>POW: {promotionCandidate.stats.power}</div>
+                    <div>SPD: {promotionCandidate.stats.speed}</div>
+                    <div>DEF: {promotionCandidate.stats.defense}</div>
+                  </>
+                ) : (
+                  <>
+                    <div>PIT: {promotionCandidate.stats.pitching}</div>
+                    <div>DEF: {promotionCandidate.stats.defense}</div>
+                    <div></div>
+                    <div></div>
+                  </>
+                )}
+              </div>
+              <div className="text-xs text-amber-400 mt-2">
+                POTENTIAL: {promotionCandidate.potential}
+              </div>
+            </div>
+          </div>
+
+          {/* Current Roster - Select to Cut */}
+          <div className="border-4 border-green-400 p-4 mb-6">
+            <div className="text-amber-400 mb-3">SELECT PLAYER TO CUT (ROSTER LIMIT: 14):</div>
+            <div className="grid grid-cols-1 gap-2 max-h-96 overflow-y-auto">
+              {myTeam.roster
+                .filter(p => p.type === promotionCandidate.type)
+                .map((player) => (
+                  <div
+                    key={player.id}
+                    onClick={() => setSelectedToCut(player)}
+                    className={`border-2 p-3 cursor-pointer ${
+                      selectedToCut?.id === player.id 
+                        ? 'bg-red-900 border-red-400' 
+                        : 'border-green-400 hover:bg-green-900'
+                    }`}
+                  >
+                    <div className="flex justify-between mb-2">
+                      <span>{player.name}</span>
+                      <span>[{player.type === 'position' ? 'POS' : 'PIT'}]</span>
+                    </div>
+                    <div className="text-xs grid grid-cols-4 gap-2">
+                      {player.type === 'position' ? (
+                        <>
+                          <div>HIT: {player.stats.hitting}</div>
+                          <div>POW: {player.stats.power}</div>
+                          <div>SPD: {player.stats.speed}</div>
+                          <div>DEF: {player.stats.defense}</div>
+                        </>
+                      ) : (
+                        <>
+                          <div>PIT: {player.stats.pitching}</div>
+                          <div>DEF: {player.stats.defense}</div>
+                          <div></div>
+                          <div></div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Action Buttons */}
+          <div className="grid grid-cols-2 gap-4">
+            <button
+              onClick={() => {
+                setPromotionCandidate(null);
+                setSelectedToCut(null);
+                setView('minor-league');
+              }}
+              className="py-3 border-4 border-green-400 hover:bg-green-400 hover:text-black"
+            >
+              {'<'} CANCEL_
+            </button>
+            <button
+              onClick={executePromotion}
+              disabled={!selectedToCut}
+              className={`py-3 border-4 border-green-400 ${
+                selectedToCut 
+                  ? 'hover:bg-green-400 hover:text-black' 
+                  : 'opacity-50 cursor-not-allowed'
+              }`}
+            >
+              {'>'} CONFIRM PROMOTION_
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ============================================================================
+  // RENDER: SEASON END (DOS Terminal - Mandatory)
+  // ============================================================================
+
+  if (view === 'season-end') {
+    if (!myTeam) {
+      return (
+        <div className="min-h-screen bg-amber-50 p-4 flex items-center justify-center">
+          <div className="text-2xl font-bold text-amber-900">Loading Team Data...</div>
+        </div>
+      );
+    }
+
+    // Calculate final standings
+    const finalStandings = [...universe.league].sort((a, b) => {
+      const aTotal = a.record.wins + a.record.losses;
+      const bTotal = b.record.wins + b.record.losses;
+      const aPct = aTotal === 0 ? 0 : a.record.wins / aTotal;
+      const bPct = bTotal === 0 ? 0 : b.record.wins / bTotal;
+      return bPct - aPct || b.record.wins - a.record.wins;
+    });
+
+    const teamFinish = finalStandings.findIndex(t => t.name === myTeam.name) + 1;
+    const ordinalSuffix = (n) => {
+      const s = ['th', 'st', 'nd', 'rd'];
+      const v = n % 100;
+      return n + (s[(v - 20) % 10] || s[v] || s[0]);
+    };
+
+    return (
+      <div className="min-h-screen bg-black text-green-400 p-4 font-mono">
+        <div className="max-w-6xl mx-auto">
+          
+          <div className="border-4 border-green-400 p-6 mb-6">
+            <pre className="text-center text-2xl">
+{`╔════════════════════════════════════════╗
+║      SEASON ${season.year} COMPLETE           ║
+║        FINAL STANDINGS REPORT          ║
+╚════════════════════════════════════════╝`}
+            </pre>
+          </div>
+
+          {/* Team Finish */}
+          <div className={`border-4 p-6 mb-6 text-center ${
+            teamFinish <= 3 ? 'border-amber-400 bg-amber-950' : 'border-green-400'
+          }`}>
+            <div className="text-xs mb-2">YOUR TEAM:</div>
+            <div className="text-3xl font-bold mb-2">{myTeam.city} {myTeam.name}</div>
+            <div className="text-5xl font-bold mb-2 text-amber-400">{ordinalSuffix(teamFinish)} PLACE</div>
+            <div className="text-2xl">{myTeam.record.wins}-{myTeam.record.losses}</div>
+          </div>
+
+          {/* Final Standings */}
+          <div className="border-4 border-green-400 p-4 mb-6">
+            <div className="text-amber-400 mb-3 text-center">FINAL LEAGUE STANDINGS:</div>
+            <div className="space-y-2">
+              {finalStandings.map((team, idx) => (
+                <div 
+                  key={idx}
+                  className={`flex justify-between p-2 border-2 ${
+                    team.name === myTeam.name 
+                      ? 'border-amber-400 bg-amber-950' 
+                      : 'border-green-400'
+                  }`}
+                >
+                  <div className="flex gap-4">
+                    <span className="w-8">{idx + 1}.</span>
+                    <span>{team.city} {team.name}</span>
+                  </div>
+                  <span className="font-bold">{team.record.wins}-{team.record.losses}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Action Buttons */}
+          <div className="grid grid-cols-3 gap-4">
+            <button
+              onClick={() => setView('season-stats')}
+              className="py-4 border-4 border-green-400 hover:bg-green-400 hover:text-black"
+            >
+              {'>'} VIEW SEASON STATS_
+            </button>
+            
+            <button
+              disabled
+              className="py-4 border-4 border-gray-600 text-gray-600 cursor-not-allowed"
+              title="Coming Soon"
+            >
+              {'>'} BEGIN PLAYOFFS_
+              <div className="text-xs mt-1">[COMING SOON]</div>
+            </button>
+            
+            <button
+              onClick={startDraft}
+              className="py-4 border-4 border-green-400 hover:bg-green-400 hover:text-black"
+            >
+              {'>'} BEGIN YEAR {season.year + 1} DRAFT_
+            </button>
+          </div>
+
+          <div className="mt-4 p-3 border-2 border-green-400 text-center text-xs">
+            NOTE: You must complete the draft to continue to the next season.
+          </div>
         </div>
       </div>
     );
@@ -1196,10 +1494,10 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
           </div>
 
           <button
-            onClick={() => setView('hub')}
+            onClick={() => setView(season.seasonEnded ? 'season-end' : 'hub')}
             className="w-full py-4 bg-amber-700 text-amber-50 border-4 border-amber-900 hover:bg-amber-800 text-xl font-bold"
           >
-            ← BACK TO HUB
+            ← {season.seasonEnded ? 'BACK TO SEASON END' : 'BACK TO HUB'}
           </button>
         </div>
       </div>
