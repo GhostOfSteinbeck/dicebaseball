@@ -17,6 +17,7 @@ export class UniverseState {
   constructor() {
     this.league = [];
     this.currentYear = 2025;
+    this.freeAgentPool = []; // Top 10 highest salaried dropped players
     this.generateLeague();
   }
 
@@ -68,11 +69,15 @@ export class UniverseState {
         });
       }
 
+      // Assign random salary cap between 30M-50M
+      const salaryCap = 30 + Math.floor(Math.random() * 21); // 30-50M
+
       return {
         ...config,
         roster,
         record: { wins: 0, losses: 0 },
-        minorLeague: [] // Store top 3 draft picks
+        minorLeague: [], // Store top 3 draft picks
+        salaryCap: salaryCap
       };
     });
   }

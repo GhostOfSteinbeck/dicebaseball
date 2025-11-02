@@ -12,7 +12,8 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
     totalGames: GAME_CONFIG.gm.seasonGames,
     year: 1,
     schedule: [], // Will be array of rounds, each round has 4 matchup pairs
-    seasonEnded: false // Track if season just ended for draft trigger
+    seasonEnded: false, // Track if season just ended for draft trigger
+    pitcherRotationIndex: 0 // Track which pitcher starts (0-4, rotates for 4 starts each)
   });
   const [gameResult, setGameResult] = useState(null);
   const [lineup, setLineup] = useState({
@@ -21,6 +22,8 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
   });
   const [promotionCandidate, setPromotionCandidate] = useState(null);
   const [selectedToCut, setSelectedToCut] = useState(null);
+  const [selectedFreeAgent, setSelectedFreeAgent] = useState(null);
+  const [selectedToReplace, setSelectedToReplace] = useState(null);
 
   // ============================================================================
   // SCHEDULE GENERATION - Round-robin for all 8 teams (exactly 20 games each)
@@ -86,32 +89,54 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
       const isPosition = i < 14;
       
       if (isPosition) {
+        // Potential is the ceiling (30-95)
+        const potential = 30 + Math.floor(Math.random() * 66);
+        // Generate stats as 85-95% of potential (allowing for high potential players to start strong)
+        const statPct = 0.85 + (Math.random() * 0.1); // 0.85 to 0.95
+        
         prospects.push({
           id: `prospect-${Date.now()}-${i}`,
           name: generateName(),
           type: 'position',
           stats: {
-            hitting: 45 + Math.floor(Math.random() * 30),
-            power: 45 + Math.floor(Math.random() * 30),
-            speed: 45 + Math.floor(Math.random() * 30),
-            defense: 45 + Math.floor(Math.random() * 30)
+            hitting: Math.min(95, Math.floor(potential * statPct) + Math.floor(Math.random() * 3) - 1),
+            power: Math.min(95, Math.floor(potential * statPct) + Math.floor(Math.random() * 3) - 1),
+            speed: Math.min(95, Math.floor(potential * statPct) + Math.floor(Math.random() * 3) - 1),
+            defense: Math.min(95, Math.floor(potential * statPct) + Math.floor(Math.random() * 3) - 1)
           },
-          potential: 30 + Math.floor(Math.random() * 65) // 30-95 range
+          potential: potential
         });
       } else {
+        // Potential is the ceiling (30-95)
+        const potential = 30 + Math.floor(Math.random() * 66);
+        // Generate stats as 85-95% of potential
+        const statPct = 0.85 + (Math.random() * 0.1); // 0.85 to 0.95
+        
         prospects.push({
           id: `prospect-${Date.now()}-${i}`,
           name: generateName(),
           type: 'pitcher',
           stats: {
-            pitching: 45 + Math.floor(Math.random() * 30),
-            defense: 45 + Math.floor(Math.random() * 30)
+            pitching: Math.min(95, Math.floor(potential * statPct) + Math.floor(Math.random() * 3) - 1),
+            defense: Math.min(95, Math.floor(potential * statPct) + Math.floor(Math.random() * 3) - 1)
           },
-          potential: 30 + Math.floor(Math.random() * 65) // 30-95 range
+          potential: potential
         });
       }
     }
-    return prospects;
+    // Sort prospects by potential (descending) so better ones appear first in draft
+    return prospects.sort((a, b) => {
+      if (a.type === 'position' && b.type === 'position') {
+        const aOverall = (a.stats.hitting + a.stats.power + a.stats.speed + a.stats.defense) / 4 + (a.potential * 0.3);
+        const bOverall = (b.stats.hitting + b.stats.power + b.stats.speed + b.stats.defense) / 4 + (b.potential * 0.3);
+        return bOverall - aOverall;
+      } else if (a.type === 'pitcher' && b.type === 'pitcher') {
+        const aOverall = a.stats.pitching + (a.potential * 0.3);
+        const bOverall = b.stats.pitching + (b.potential * 0.3);
+        return bOverall - aOverall;
+      }
+      return 0;
+    });
   };
 
   const evaluateProspect = (player) => {
@@ -124,7 +149,9 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
 
   const startDraft = () => {
     const prospects = generateProspects();
-    const draftOrder = [...universe.league].sort(() => Math.random() - 0.5);
+    // Reverse standings order: worst team picks first
+    const standings = universe.getStandings();
+    const draftOrder = [...standings].reverse(); // Last place picks #1
     
     setDraftState({
       prospects,
@@ -156,7 +183,7 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
       picks: newPicks
     });
     
-    // Draft complete - Smart minor league management (keep best 3 prospects)
+    // Draft complete - Smart minor league management (keep best 5 prospects)
     if (nextPick >= 16) {
       // Update universe directly
       universe.league.forEach(team => {
@@ -167,17 +194,39 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
         // Combine existing minor league with new picks
         const allProspects = [...(team.minorLeague || []), ...teamPicks];
         
-        // Sort by evaluation score and keep only top 3
+        // Sort by evaluation score and keep only top 5
         const sortedProspects = allProspects.sort((a, b) => evaluateProspect(b) - evaluateProspect(a));
-        team.minorLeague = sortedProspects.slice(0, 3);
+        team.minorLeague = sortedProspects.slice(0, 5);
         
         // Reset records for new season
         team.record.wins = 0;
         team.record.losses = 0;
         
         // All other prospects are deleted (not added to roster)
-        console.log(`Team ${team.name}: Kept ${team.minorLeague.length} prospects, deleted ${allProspects.length - 3} others`);
+        console.log(`Team ${team.name}: Kept ${team.minorLeague.length} prospects, deleted ${allProspects.length - 5} others`);
       });
+      
+      // Calculate salaries for all players based on end-of-season stats
+      universe.league.forEach(team => {
+        team.roster.forEach(player => {
+          player.salary = calculateSalary(player);
+        });
+      });
+      
+      // Enforce salary cap for all teams and collect dropped players
+      const allDroppedPlayers = [];
+      universe.league.forEach(team => {
+        const droppedPlayers = enforceSalaryCap(team);
+        allDroppedPlayers.push(...droppedPlayers);
+      });
+      
+      // Create free agent pool: top 10 highest salaried dropped players
+      const sortedDropped = allDroppedPlayers.sort((a, b) => {
+        const aSalary = a.salary || calculateSalary(a);
+        const bSalary = b.salary || calculateSalary(b);
+        return salaryToValue(bSalary) - salaryToValue(aSalary);
+      });
+      universe.freeAgentPool = sortedDropped.slice(0, 10);
       
       // Update myTeam reference
       const updatedTeam = universe.league.find(t => t.name === myTeam.name);
@@ -186,17 +235,101 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
       // Generate new schedule for the new season
       const newSchedule = generateFullLeagueSchedule();
       
-      // Start new season
+      // Adjust player stats for new season (aging)
+      adjustPlayerStatsForNewSeason();
+      
+      // Start new season (reset pitcher rotation)
       setSeason({
         gamesPlayed: 0,
         totalGames: GAME_CONFIG.gm.seasonGames,
         year: season.year + 1,
         schedule: newSchedule,
-        seasonEnded: false
+        seasonEnded: false,
+        pitcherRotationIndex: 0 // Reset rotation each season
       });
       
       setView('hub');
     }
+  };
+
+  // ============================================================================
+  // PLAYER STAT ADJUSTMENTS (Aging System)
+  // ============================================================================
+
+  const adjustPlayerStatsForNewSeason = () => {
+    universe.league.forEach(team => {
+      team.roster.forEach(player => {
+        // Save previous year's stats before modifying
+        if (player.type === 'position') {
+          player.previousYearStats = {
+            hitting: player.stats.hitting,
+            power: player.stats.power,
+            speed: player.stats.speed,
+            defense: player.stats.defense
+          };
+        } else {
+          player.previousYearStats = {
+            pitching: player.stats.pitching,
+            defense: player.stats.defense
+          };
+        }
+        
+        // Also save previous stats for minor league prospects
+        (team.minorLeague || []).forEach(prospect => {
+          if (prospect.type === 'position') {
+            prospect.previousYearStats = {
+              hitting: prospect.stats.hitting,
+              power: prospect.stats.power,
+              speed: prospect.stats.speed,
+              defense: prospect.stats.defense
+            };
+          } else {
+            prospect.previousYearStats = {
+              pitching: prospect.stats.pitching,
+              defense: prospect.stats.defense
+            };
+          }
+        });
+        
+        // Age player by 1 year
+        player.age = (player.age || 22) + 1;
+        
+        // Determine adjustment percentage based on age
+        let adjustmentPct = (Math.random() * 6 - 3) / 100; // -3% to +3% base
+        
+        // If over 32, much higher chance of negative adjustment
+        if (player.age > 32) {
+          // 70% chance of negative, 30% chance of positive (but smaller)
+          if (Math.random() < 0.7) {
+            adjustmentPct = -(Math.random() * 3 + 1) / 100; // -1% to -4%
+          } else {
+            adjustmentPct = (Math.random() * 2) / 100; // 0% to +2% (smaller gains)
+          }
+        } else if (player.age <= 28 && player.potential) {
+          // Younger players with potential have higher chance of growth
+          // If stats are below potential, more likely to grow
+          const currentOverall = player.type === 'position'
+            ? (player.stats.hitting + player.stats.power + player.stats.speed + player.stats.defense) / 4
+            : player.stats.pitching;
+          
+          if (currentOverall < player.potential) {
+            // Higher chance of positive growth when below potential
+            adjustmentPct = (Math.random() * 4) / 100; // 0% to +4%
+          }
+        }
+        
+        // Apply adjustments to all stats
+        if (player.type === 'position') {
+          player.stats.hitting = Math.max(30, Math.min(95, Math.round(player.stats.hitting * (1 + adjustmentPct))));
+          player.stats.power = Math.max(30, Math.min(95, Math.round(player.stats.power * (1 + adjustmentPct))));
+          player.stats.speed = Math.max(30, Math.min(95, Math.round(player.stats.speed * (1 + adjustmentPct))));
+          player.stats.defense = Math.max(30, Math.min(95, Math.round(player.stats.defense * (1 + adjustmentPct))));
+        } else {
+          player.stats.pitching = Math.max(30, Math.min(95, Math.round(player.stats.pitching * (1 + adjustmentPct))));
+          player.stats.defense = Math.max(30, Math.min(95, Math.round(player.stats.defense * (1 + adjustmentPct))));
+        }
+      });
+    });
   };
 
   // ============================================================================
@@ -231,7 +364,7 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
     return bonuses[position] || 0;
   };
 
-  const calculateTeamStrength = (team, isOffense) => {
+  const calculateTeamStrength = (team, isOffense, startingPitcherIndex = null) => {
     const positionPlayers = team.roster.filter(p => p.type === 'position');
     const pitchers = team.roster.filter(p => p.type === 'pitcher');
     
@@ -244,7 +377,19 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
     } else {
       // Defense: team defense + pitcher + position bonuses
       const fieldingDefense = positionPlayers.reduce((sum, p) => sum + p.stats.defense, 0) / positionPlayers.length;
-      const pitchingDefense = pitchers.reduce((sum, p) => sum + p.stats.pitching, 0) / pitchers.length;
+      
+      // Use starting pitcher for this game (rotate through 5 pitchers)
+      let pitchingDefense;
+      if (startingPitcherIndex !== null && team.name === myTeam.name && pitchers[startingPitcherIndex]) {
+        // Player's team: use rotation
+        pitchingDefense = pitchers[startingPitcherIndex].stats.pitching;
+      } else if (team.name !== myTeam.name && startingPitcherIndex !== null && pitchers[startingPitcherIndex]) {
+        // CPU team: also rotate (use same index)
+        pitchingDefense = pitchers[startingPitcherIndex].stats.pitching;
+      } else {
+        // Fallback: average if rotation not set
+        pitchingDefense = pitchers.reduce((sum, p) => sum + p.stats.pitching, 0) / pitchers.length;
+      }
       
       // Position bonuses (if lineup is set, use those positions)
       let positionBonus = 0;
@@ -260,11 +405,11 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
     }
   };
 
-  const runSingleSimulation = (team1, team2) => {
+  const runSingleSimulation = (team1, team2, team1PitcherIndex = null, team2PitcherIndex = null) => {
     const team1Offense = calculateTeamStrength(team1, true);
-    const team1Defense = calculateTeamStrength(team1, false);
+    const team1Defense = calculateTeamStrength(team1, false, team1PitcherIndex);
     const team2Offense = calculateTeamStrength(team2, true);
-    const team2Defense = calculateTeamStrength(team2, false);
+    const team2Defense = calculateTeamStrength(team2, false, team2PitcherIndex);
     
     // Realistic baseball scoring: base 3 runs + team difference + small randomness
     let team1Score = Math.max(0, Math.floor(
@@ -335,8 +480,13 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
         return;
       }
       
-      // Simulate CPU vs CPU game
-      const result = runSingleSimulation(team1, team2);
+      // CPU vs CPU game: each team rotates their pitchers
+      // Calculate rotation index for each CPU team based on game number
+      const team1PitcherIndex = currentRound % 5; // 0-4 rotation
+      const team2PitcherIndex = currentRound % 5;
+      
+      // Simulate CPU vs CPU game with pitcher rotation
+      const result = runSingleSimulation(team1, team2, team1PitcherIndex, team2PitcherIndex);
       
       if (result.team1Score > result.team2Score) {
         universe.recordGame(team1.name, team2.name);
@@ -365,11 +515,15 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
     // Determine opponent (the team that isn't myTeam)
     const opponent = playerMatchup.team1.name === myTeam.name ? playerMatchup.team2 : playerMatchup.team1;
     
+    // Get current pitcher rotation index (0-4, each pitcher gets 4 starts)
+    const myPitcherIndex = season.pitcherRotationIndex % 5;
+    const oppPitcherIndex = season.gamesPlayed % 5; // Opponent also rotates
+    
     // Run 3 simulations for player's game, take median result
     const sims = [
-      runSingleSimulation(myTeam, opponent),
-      runSingleSimulation(myTeam, opponent),
-      runSingleSimulation(myTeam, opponent)
+      runSingleSimulation(myTeam, opponent, myPitcherIndex, oppPitcherIndex),
+      runSingleSimulation(myTeam, opponent, myPitcherIndex, oppPitcherIndex),
+      runSingleSimulation(myTeam, opponent, myPitcherIndex, oppPitcherIndex)
     ];
     
     // Pick the median result
@@ -420,7 +574,9 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
       // Go to mandatory season-end screen
       setView('season-end');
     } else {
-      setSeason({ ...season, gamesPlayed: newGamesPlayed });
+      // Advance pitcher rotation for next game
+      const nextPitcherIndex = (season.pitcherRotationIndex + 1) % 5;
+      setSeason({ ...season, gamesPlayed: newGamesPlayed, pitcherRotationIndex: nextPitcherIndex });
       setGameResult({ opponent: opponent.name, yourScore, oppScore, won, seasonOver: false, playerOfTheGame });
       // Stay on hub view, show result overlay
       setView('hub');
@@ -456,6 +612,53 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
       if (overall >= 55) return '$$';
       return '$';
     }
+  };
+
+  // Convert salary string to numeric value (in millions)
+  const salaryToValue = (salary) => {
+    if (salary === '$$$$') return 4;
+    if (salary === '$$$') return 3;
+    if (salary === '$$') return 2;
+    return 1; // $
+  };
+
+  // Calculate total roster cost for a team
+  const calculateRosterCost = (team) => {
+    return team.roster.reduce((total, player) => {
+      const salary = player.salary || calculateSalary(player);
+      return total + salaryToValue(salary);
+    }, 0);
+  };
+
+  // Enforce salary cap - drop highest salaried players until under cap
+  const enforceSalaryCap = (team) => {
+    const droppedPlayers = [];
+    let rosterCost = calculateRosterCost(team);
+    
+    while (rosterCost > team.salaryCap && team.roster.length > 0) {
+      // Sort roster by salary (highest first) and drop the highest paid player
+      const sortedRoster = [...team.roster].sort((a, b) => {
+        const aSalary = a.salary || calculateSalary(a);
+        const bSalary = b.salary || calculateSalary(b);
+        return salaryToValue(bSalary) - salaryToValue(aSalary);
+      });
+      
+      const playerToDrop = sortedRoster[0];
+      team.roster = team.roster.filter(p => p.id !== playerToDrop.id);
+      droppedPlayers.push(playerToDrop);
+      rosterCost = calculateRosterCost(team);
+    }
+    
+    return droppedPlayers;
+  };
+
+  // Helper function to format stat changes
+  const formatStatChange = (current, previous) => {
+    if (!previous) return current.toString();
+    const change = current - previous;
+    if (change > 0) return `${current} (+${change})`;
+    if (change < 0) return `${current} (${change})`;
+    return `${current} (=)`;
   };
 
   // ============================================================================
@@ -698,7 +901,6 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
         `}</style>
         <div className="max-w-4xl mx-auto">
           
-          {/* Header */}
           <div className="bg-amber-900 text-amber-50 p-4 mb-4 border-8 border-double border-amber-950">
             <div className="text-center">
               <div className="text-xs tracking-widest">GENERAL MANAGER</div>
@@ -707,6 +909,16 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
                 YEAR {season.year} | GAME {season.gamesPlayed}/{season.totalGames} | {myTeam.record.wins}-{myTeam.record.losses}
               </div>
             </div>
+          </div>
+
+          {/* Exit Button */}
+          <div className="mb-4">
+            <button
+              onClick={onExit}
+              className="w-full py-2 bg-red-600 text-white border-4 border-red-800 hover:bg-red-700 text-sm font-bold"
+            >
+              ← EXIT TO MENU
+            </button>
           </div>
 
           {/* Stadium Visual */}
@@ -846,6 +1058,16 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
               <div className="text-2xl font-bold mb-2">MINOR LEAGUE</div>
               <div className="text-sm">Top prospects ({myTeam.minorLeague?.length || 0})</div>
             </button>
+
+            {universe.freeAgentPool && universe.freeAgentPool.length > 0 && (
+              <button
+                onClick={() => setView('free-agent-pool')}
+                className="bg-amber-100 border-4 border-amber-900 p-6 hover:bg-amber-200"
+              >
+                <div className="text-2xl font-bold mb-2">FREE AGENT POOL</div>
+                <div className="text-sm">Available players ({universe.freeAgentPool.length})</div>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -880,6 +1102,9 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
           {/* Active Roster */}
           <div className="bg-amber-100 p-6 border-4 border-amber-900 mb-6">
             <h2 className="text-2xl font-bold mb-4">ACTIVE ROSTER</h2>
+            <div className="mb-4 text-sm text-gray-700">
+              Salary Cap: ${myTeam.salaryCap}M | Current Cost: ${calculateRosterCost(myTeam)}M
+            </div>
             
             <div className="mb-4">
               <h3 className="text-xl font-bold mb-3">POSITION PLAYERS ({positionPlayers.length})</h3>
@@ -889,26 +1114,41 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
                     <tr className="border-b-2 border-amber-900">
                       <th className="text-left p-2">NAME</th>
                       <th className="p-2">POS</th>
+                      <th className="p-2">HIT</th>
+                      <th className="p-2">POW</th>
+                      <th className="p-2">SPD</th>
+                      <th className="p-2">DEF</th>
                       <th className="p-2">PROJ AVG</th>
                       <th className="p-2">PROJ HR</th>
                       <th className="p-2">PROJ SB</th>
-                      <th className="p-2">RATING</th>
+                      <th className="p-2">SALARY</th>
                     </tr>
                   </thead>
                   <tbody>
                     {positionPlayers.map((p, idx) => {
                       const stats = calculateSeasonStats(p);
-                      const position = Object.entries(lineup).find(([pos, player]) => player?.id === p.id)?.[0] || 'BENCH';
+                      const salary = p.salary || calculateSalary(p);
+                      const position = Object.entries(lineup).find(([pos, player]) => player?.id === p.id)?.[0] || 'UNASSIGNED';
                       return (
                         <tr key={idx} className="border-b border-amber-700">
                           <td className="p-2 font-bold">{p.name}</td>
                           <td className="p-2 text-center">{position}</td>
+                          <td className="p-2 text-center">
+                            {formatStatChange(p.stats.hitting, p.previousYearStats?.hitting)}
+                          </td>
+                          <td className="p-2 text-center">
+                            {formatStatChange(p.stats.power, p.previousYearStats?.power)}
+                          </td>
+                          <td className="p-2 text-center">
+                            {formatStatChange(p.stats.speed, p.previousYearStats?.speed)}
+                          </td>
+                          <td className="p-2 text-center">
+                            {formatStatChange(p.stats.defense, p.previousYearStats?.defense)}
+                          </td>
                           <td className="p-2 text-center">{stats.avg}</td>
                           <td className="p-2 text-center">{stats.homeRuns}</td>
                           <td className="p-2 text-center">{stats.stolenBases}</td>
-                          <td className="p-2 text-center">
-                            {Math.round((p.stats.hitting + p.stats.power + p.stats.speed + p.stats.defense) / 4)}
-                          </td>
+                          <td className="p-2 text-center text-lg font-bold text-green-700">{salary}</td>
                         </tr>
                       );
                     })}
@@ -919,15 +1159,34 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
 
             <div>
               <h3 className="text-xl font-bold mb-3">PITCHERS ({pitchers.length})</h3>
-              <div className="space-y-2">
-                {pitchers.map((p, idx) => (
-                  <div key={idx} className="bg-white border-2 border-amber-700 p-3 flex justify-between items-center">
-                    <div className="font-bold">{p.name}</div>
-                    <div className="text-sm">
-                      RATING: {p.stats.pitching} | DEF: {p.stats.defense}
-                    </div>
-                  </div>
-                ))}
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b-2 border-amber-900">
+                      <th className="text-left p-2">NAME</th>
+                      <th className="p-2">PITCH</th>
+                      <th className="p-2">DEF</th>
+                      <th className="p-2">SALARY</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pitchers.map((p, idx) => {
+                      const salary = p.salary || calculateSalary(p);
+                      return (
+                        <tr key={idx} className="border-b border-amber-700">
+                          <td className="p-2 font-bold">{p.name}</td>
+                          <td className="p-2 text-center">
+                            {formatStatChange(p.stats.pitching, p.previousYearStats?.pitching)}
+                          </td>
+                          <td className="p-2 text-center">
+                            {formatStatChange(p.stats.defense, p.previousYearStats?.defense)}
+                          </td>
+                          <td className="p-2 text-center text-lg font-bold text-green-700">{salary}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             </div>
           </div>
@@ -947,6 +1206,10 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
                     <tr className="border-b-2 border-amber-900">
                       <th className="text-left p-2">NAME</th>
                       <th className="p-2">TYPE</th>
+                      <th className="p-2">HIT</th>
+                      <th className="p-2">POW</th>
+                      <th className="p-2">SPD</th>
+                      <th className="p-2">DEF</th>
                       <th className="p-2">PROJ AVG</th>
                       <th className="p-2">PROJ HR</th>
                       <th className="p-2">PROJ SB</th>
@@ -964,6 +1227,33 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
                         <tr key={idx} className="border-b border-amber-700">
                           <td className="p-2 font-bold">{p.name}</td>
                           <td className="p-2 text-center">{p.type === 'position' ? 'POS' : 'PIT'}</td>
+                          {p.type === 'position' ? (
+                            <>
+                              <td className="p-2 text-center">
+                                {formatStatChange(p.stats.hitting, p.previousYearStats?.hitting)}
+                              </td>
+                              <td className="p-2 text-center">
+                                {formatStatChange(p.stats.power, p.previousYearStats?.power)}
+                              </td>
+                              <td className="p-2 text-center">
+                                {formatStatChange(p.stats.speed, p.previousYearStats?.speed)}
+                              </td>
+                              <td className="p-2 text-center">
+                                {formatStatChange(p.stats.defense, p.previousYearStats?.defense)}
+                              </td>
+                            </>
+                          ) : (
+                            <>
+                              <td className="p-2 text-center">
+                                {formatStatChange(p.stats.pitching, p.previousYearStats?.pitching)}
+                              </td>
+                              <td className="p-2 text-center">-</td>
+                              <td className="p-2 text-center">-</td>
+                              <td className="p-2 text-center">
+                                {formatStatChange(p.stats.defense, p.previousYearStats?.defense)}
+                              </td>
+                            </>
+                          )}
                           <td className="p-2 text-center">{stats.avg}</td>
                           <td className="p-2 text-center">{stats.homeRuns}</td>
                           <td className="p-2 text-center">{stats.stolenBases}</td>
@@ -1052,7 +1342,7 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
           
           <div className="bg-amber-900 text-amber-50 p-4 mb-6 border-8 border-double border-amber-950">
             <h1 className="text-3xl font-bold text-center">{myTeam.name.toUpperCase()} MINOR LEAGUE</h1>
-            <p className="text-center text-amber-200 text-sm mt-2">Top 3 Draft Picks Storage</p>
+            <p className="text-center text-amber-200 text-sm mt-2">Top 5 Draft Picks Storage</p>
           </div>
 
           {minorLeaguePlayers.length === 0 ? (
@@ -1078,30 +1368,30 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
                         <>
                           <div className="text-center p-2 bg-amber-50 border border-amber-700">
                             <div className="text-xs">HIT</div>
-                            <div className="font-bold">{player.stats.hitting}</div>
+                            <div className="font-bold">{formatStatChange(player.stats.hitting, player.previousYearStats?.hitting)}</div>
                           </div>
                           <div className="text-center p-2 bg-amber-50 border border-amber-700">
                             <div className="text-xs">POW</div>
-                            <div className="font-bold">{player.stats.power}</div>
+                            <div className="font-bold">{formatStatChange(player.stats.power, player.previousYearStats?.power)}</div>
                           </div>
                           <div className="text-center p-2 bg-amber-50 border border-amber-700">
                             <div className="text-xs">SPD</div>
-                            <div className="font-bold">{player.stats.speed}</div>
+                            <div className="font-bold">{formatStatChange(player.stats.speed, player.previousYearStats?.speed)}</div>
                           </div>
                           <div className="text-center p-2 bg-amber-50 border border-amber-700">
                             <div className="text-xs">DEF</div>
-                            <div className="font-bold">{player.stats.defense}</div>
+                            <div className="font-bold">{formatStatChange(player.stats.defense, player.previousYearStats?.defense)}</div>
                           </div>
                         </>
                       ) : (
                         <>
                           <div className="text-center p-2 bg-amber-50 border border-amber-700">
                             <div className="text-xs">PITCH</div>
-                            <div className="font-bold">{player.stats.pitching}</div>
+                            <div className="font-bold">{formatStatChange(player.stats.pitching, player.previousYearStats?.pitching)}</div>
                           </div>
                           <div className="text-center p-2 bg-amber-50 border border-amber-700">
                             <div className="text-xs">DEF</div>
-                            <div className="font-bold">{player.stats.defense}</div>
+                            <div className="font-bold">{formatStatChange(player.stats.defense, player.previousYearStats?.defense)}</div>
                           </div>
                           <div className="col-span-2 text-center p-2 bg-amber-50 border border-amber-700">
                             <div className="text-xs">POTENTIAL</div>
@@ -1132,6 +1422,201 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
           >
             ← BACK TO HUB
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ============================================================================
+  // RENDER: FREE AGENT POOL (DOS Terminal)
+  // ============================================================================
+
+  if (view === 'free-agent-pool') {
+    if (!myTeam) {
+      return (
+        <div className="min-h-screen bg-amber-50 p-4 flex items-center justify-center">
+          <div className="text-2xl font-bold text-amber-900">Loading Team Data...</div>
+        </div>
+      );
+    }
+
+    const freeAgents = universe.freeAgentPool || [];
+
+    const signFreeAgent = () => {
+      if (!selectedFreeAgent || !selectedToReplace) {
+        alert('Please select a free agent and a player to replace');
+        return;
+      }
+
+      // Check if we can afford the free agent
+      const freeAgentCost = salaryToValue(selectedFreeAgent.salary || calculateSalary(selectedFreeAgent));
+      const replacedPlayerCost = salaryToValue(selectedToReplace.salary || calculateSalary(selectedToReplace));
+      const currentCost = calculateRosterCost(myTeam);
+      const newCost = currentCost - replacedPlayerCost + freeAgentCost;
+
+      if (newCost > myTeam.salaryCap) {
+        alert(`Cannot sign: Would exceed salary cap (${myTeam.salaryCap}M). New cost would be ${newCost}M.`);
+        return;
+      }
+
+      // Replace player
+      const teamInUniverse = universe.league.find(t => t.name === myTeam.name);
+      const playerIndex = teamInUniverse.roster.findIndex(p => p.id === selectedToReplace.id);
+      if (playerIndex !== -1) {
+        teamInUniverse.roster[playerIndex] = { ...selectedFreeAgent };
+      }
+
+      // Remove from free agent pool
+      universe.freeAgentPool = universe.freeAgentPool.filter(p => p.id !== selectedFreeAgent.id);
+
+      // Update local state
+      setMyTeam(universe.league.find(t => t.name === myTeam.name));
+      setSelectedFreeAgent(null);
+      setSelectedToReplace(null);
+    };
+
+    return (
+      <div className="min-h-screen bg-black text-green-400 p-4 font-mono">
+        <div className="max-w-6xl mx-auto">
+          
+          <div className="border-4 border-green-400 p-4 mb-6">
+            <pre className="text-center">
+{`╔════════════════════════════════════════╗
+║     FREE AGENT POOL PROTOCOL            ║
+║    [TOP 10 HIGHEST SALARIED PLAYERS]    ║
+╚════════════════════════════════════════╝`}
+            </pre>
+          </div>
+
+          <div className="mb-4 text-center">
+            <div className="mb-2">Your Salary Cap: ${myTeam.salaryCap}M</div>
+            <div className="mb-2">Current Roster Cost: ${calculateRosterCost(myTeam)}M</div>
+            <div className="mb-2">Available: ${myTeam.salaryCap - calculateRosterCost(myTeam)}M</div>
+          </div>
+
+          {freeAgents.length === 0 ? (
+            <div className="border-4 border-green-400 p-6 text-center mb-6">
+              <div className="text-xl mb-4">NO FREE AGENTS AVAILABLE</div>
+              <div className="text-sm">All available players have been signed or released.</div>
+            </div>
+          ) : (
+            <>
+              <div className="border-4 border-green-400 p-4 mb-6">
+                <div className="text-amber-400 mb-3">AVAILABLE FREE AGENTS ({freeAgents.length}):</div>
+                <div className="space-y-2 max-h-96 overflow-y-auto">
+                  {freeAgents.map((player, idx) => {
+                    const salary = player.salary || calculateSalary(player);
+                    return (
+                      <div
+                        key={idx}
+                        onClick={() => setSelectedFreeAgent(player)}
+                        className={`border-2 p-3 cursor-pointer ${
+                          selectedFreeAgent?.id === player.id
+                            ? 'bg-green-900 border-green-400'
+                            : 'border-green-400 hover:bg-green-900'
+                        }`}
+                      >
+                        <div className="flex justify-between mb-2">
+                          <span className="font-bold">{player.name}</span>
+                          <span className="text-amber-400">Salary: {salary}</span>
+                        </div>
+                        <div className="text-xs grid grid-cols-4 gap-2">
+                          {player.type === 'position' ? (
+                            <>
+                              <div>HIT: {player.stats.hitting}</div>
+                              <div>POW: {player.stats.power}</div>
+                              <div>SPD: {player.stats.speed}</div>
+                              <div>DEF: {player.stats.defense}</div>
+                            </>
+                          ) : (
+                            <>
+                              <div>PIT: {player.stats.pitching}</div>
+                              <div>DEF: {player.stats.defense}</div>
+                              <div></div>
+                              <div></div>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {selectedFreeAgent && (
+                <div className="border-4 border-green-400 p-4 mb-6">
+                  <div className="text-amber-400 mb-3">SELECT PLAYER TO REPLACE (MUST MAINTAIN: 9 POSITION + 5 PITCHERS):</div>
+                  <div className="grid grid-cols-1 gap-2 max-h-96 overflow-y-auto">
+                    {myTeam.roster
+                      .filter(p => p.type === selectedFreeAgent.type)
+                      .map((player) => {
+                        const salary = player.salary || calculateSalary(player);
+                        return (
+                          <div
+                            key={player.id}
+                            onClick={() => setSelectedToReplace(player)}
+                            className={`border-2 p-3 cursor-pointer ${
+                              selectedToReplace?.id === player.id
+                                ? 'bg-red-900 border-red-400'
+                                : 'border-green-400 hover:bg-green-900'
+                            }`}
+                          >
+                            <div className="flex justify-between mb-2">
+                              <span>{player.name}</span>
+                              <span className="text-xs">Salary: {salary}</span>
+                            </div>
+                            <div className="text-xs grid grid-cols-4 gap-2">
+                              {player.type === 'position' ? (
+                                <>
+                                  <div>HIT: {player.stats.hitting}</div>
+                                  <div>POW: {player.stats.power}</div>
+                                  <div>SPD: {player.stats.speed}</div>
+                                  <div>DEF: {player.stats.defense}</div>
+                                </>
+                              ) : (
+                                <>
+                                  <div>PIT: {player.stats.pitching}</div>
+                                  <div>DEF: {player.stats.defense}</div>
+                                  <div></div>
+                                  <div></div>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-4 mb-4">
+                <button
+                  onClick={signFreeAgent}
+                  disabled={!selectedFreeAgent || !selectedToReplace}
+                  className={`py-3 border-4 border-green-400 ${
+                    selectedFreeAgent && selectedToReplace
+                      ? 'hover:bg-green-400 hover:text-black'
+                      : 'opacity-50 cursor-not-allowed'
+                  }`}
+                >
+                  {'>'} SIGN FREE AGENT_
+                </button>
+              </div>
+            </>
+          )}
+
+          <div className="grid grid-cols-1 gap-4">
+            <button
+              onClick={() => {
+                setSelectedFreeAgent(null);
+                setSelectedToReplace(null);
+                setView('hub');
+              }}
+              className="w-full py-3 border-4 border-green-400 hover:bg-green-400 hover:text-black"
+            >
+              {'<'} BACK TO HUB_
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -1225,8 +1710,8 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
           </div>
 
           {/* Current Roster - Select to Cut */}
-          <div className="border-4 border-green-400 p-4 mb-6">
-            <div className="text-amber-400 mb-3">SELECT PLAYER TO CUT (ROSTER LIMIT: 14):</div>
+            <div className="border-4 border-green-400 p-4 mb-6">
+            <div className="text-amber-400 mb-3">SELECT PLAYER TO CUT (MUST MAINTAIN: 9 POSITION + 5 PITCHERS):</div>
             <div className="grid grid-cols-1 gap-2 max-h-96 overflow-y-auto">
               {myTeam.roster
                 .filter(p => p.type === promotionCandidate.type)
