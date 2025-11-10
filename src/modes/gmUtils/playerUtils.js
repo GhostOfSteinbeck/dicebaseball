@@ -51,6 +51,7 @@ export const evaluateProspect = (player) => {
  */
 export const adjustPlayerStatsForNewSeason = (universe) => {
   universe.league.forEach(team => {
+    // Process active roster players
     team.roster.forEach(player => {
       // Save previous year's stats before modifying
       if (player.type === 'position') {
@@ -66,23 +67,6 @@ export const adjustPlayerStatsForNewSeason = (universe) => {
           defense: player.stats.defense
         };
       }
-      
-      // Also save previous stats for minor league prospects
-      (team.minorLeague || []).forEach(prospect => {
-        if (prospect.type === 'position') {
-          prospect.previousYearStats = {
-            hitting: prospect.stats.hitting,
-            power: prospect.stats.power,
-            speed: prospect.stats.speed,
-            defense: prospect.stats.defense
-          };
-        } else {
-          prospect.previousYearStats = {
-            pitching: prospect.stats.pitching,
-            defense: prospect.stats.defense
-          };
-        }
-      });
       
       // Age player by 1 year
       player.age = (player.age || 22) + 1;
@@ -120,6 +104,24 @@ export const adjustPlayerStatsForNewSeason = (universe) => {
       } else {
         player.stats.pitching = Math.max(30, Math.min(95, Math.round(player.stats.pitching * (1 + adjustmentPct))));
         player.stats.defense = Math.max(30, Math.min(95, Math.round(player.stats.defense * (1 + adjustmentPct))));
+      }
+    });
+    
+    // Process minor league prospects (moved outside roster loop to execute once per team)
+    (team.minorLeague || []).forEach(prospect => {
+      // Save previous stats for minor league prospects
+      if (prospect.type === 'position') {
+        prospect.previousYearStats = {
+          hitting: prospect.stats.hitting,
+          power: prospect.stats.power,
+          speed: prospect.stats.speed,
+          defense: prospect.stats.defense
+        };
+      } else {
+        prospect.previousYearStats = {
+          pitching: prospect.stats.pitching,
+          defense: prospect.stats.defense
+        };
       }
     });
   });
