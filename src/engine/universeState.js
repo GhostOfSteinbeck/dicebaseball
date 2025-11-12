@@ -18,6 +18,7 @@ export class UniverseState {
     this.league = [];
     this.currentYear = 2025;
     this.freeAgentPool = []; // Top 10 highest salaried dropped players
+    this.graduatedPlayers = []; // Career Mode graduates waiting for next draft
     this.generateLeague();
   }
 

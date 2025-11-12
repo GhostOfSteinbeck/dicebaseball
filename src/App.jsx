@@ -114,7 +114,14 @@ function App() {
           
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
             {universe.league.map((team, idx) => (
-              <div key={idx} onClick={() => setScreen('career-mode')} className="cursor-pointer hover:scale-105 transition-transform">
+              <div 
+                key={idx} 
+                onClick={() => {
+                  setSelectedTeam(team);
+                  setScreen('career-mode');
+                }} 
+                className="cursor-pointer hover:scale-105 transition-transform"
+              >
                 <div className="p-6 border-4 border-amber-900 text-center text-white" style={{ backgroundColor: team.colors[0] }}>
                   <div className="w-16 h-16 mx-auto mb-2">{team.logo(team.colors[0])}</div>
                   <div className="text-xs mb-1">{team.city.toUpperCase()}</div>

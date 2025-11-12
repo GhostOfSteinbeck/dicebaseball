@@ -59,7 +59,13 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
   // ============================================================================
 
   const startDraft = () => {
-    const prospects = gmUtils.generateProspects();
+    // Get graduated players from Career Mode and include them in draft
+    const graduatedPlayers = universe.graduatedPlayers || [];
+    const prospects = gmUtils.generateProspects(graduatedPlayers);
+    
+    // Clear graduated players after adding them to draft (they're now in the draft pool)
+    universe.graduatedPlayers = [];
+    
     // Reverse standings order: worst team picks first
     const standings = universe.getStandings();
     const draftOrder = [...standings].reverse(); // Last place picks #1

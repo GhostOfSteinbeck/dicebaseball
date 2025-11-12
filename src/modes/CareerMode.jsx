@@ -33,6 +33,11 @@ const CareerMode = ({ universe, selectedTeam, onExit }) => {
   };
 
   const createProspect = () => {
+    if (!selectedTeam) {
+      alert('No team selected. Please go back and select a team.');
+      return;
+    }
+    
     const rollStat = () => Math.floor(Math.random() * 20) + 40;
     const trait = POSITION_TRAITS[Math.floor(Math.random() * POSITION_TRAITS.length)];
     
@@ -197,9 +202,54 @@ const CareerMode = ({ universe, selectedTeam, onExit }) => {
     setGamePhase('playing');
   };
 
+  const getRequiredAVG = (level) => {
+    // Base AVG requirements per level
+    let baseAVG;
+    if (level === 'Single-A') {
+      baseAVG = 0.250;
+    } else if (level === 'Double-A') {
+      baseAVG = 0.260;
+    } else if (level === 'Triple-A') {
+      baseAVG = 0.270;
+    } else {
+      baseAVG = 0.250; // fallback
+    }
+    
+    // Defense adjustment: inverse relationship
+    // Lower defense requires higher AVG, higher defense allows lower AVG
+    // For each point above/below 50 defense, adjust AVG requirement by 0.002
+    const defenseAdjustment = (player.defense - 50) * 0.002;
+    return baseAVG - defenseAdjustment;
+  };
+
+  const addGraduatedPlayerToDraft = () => {
+    // Convert Career Mode player to draft prospect format
+    const draftProspect = {
+      id: `career-graduate-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      name: player.name,
+      type: 'position', // Career Mode only creates position players
+      stats: {
+        hitting: player.hitting,
+        power: player.power,
+        speed: player.speed,
+        defense: player.defense
+      },
+      potential: player.potential,
+      trait: player.trait,
+      fromCareerMode: true // Flag to identify career mode graduates
+    };
+    
+    // Add to universe's graduated players queue
+    if (!universe.graduatedPlayers) {
+      universe.graduatedPlayers = [];
+    }
+    universe.graduatedPlayers.push(draftProspect);
+  };
+
   const advanceLevel = () => {
     const avg = currentSeason.hits / currentSeason.atBats;
-    const shouldPromote = avg >= 0.250;
+    const requiredAVG = getRequiredAVG(currentSeason.level);
+    const shouldPromote = avg >= requiredAVG;
     
     if (shouldPromote) {
       if (currentSeason.level === 'Single-A') {
@@ -207,6 +257,8 @@ const CareerMode = ({ universe, selectedTeam, onExit }) => {
       } else if (currentSeason.level === 'Double-A') {
         startNewSeason('Triple-A');
       } else if (currentSeason.level === 'Triple-A') {
+        // Player has graduated - add to draft pool
+        addGraduatedPlayerToDraft();
         setGamePhase('graduated');
       }
     } else {
@@ -237,6 +289,27 @@ const CareerMode = ({ universe, selectedTeam, onExit }) => {
     if (currentSeason.atBats === 0) return '.000';
     return (currentSeason.hits / currentSeason.atBats).toFixed(3);
   };
+
+  // Safety check: if no team is selected, show error and allow going back
+  if (!selectedTeam) {
+    return (
+      <div className="min-h-screen bg-amber-50 p-4 flex items-center justify-center">
+        <div className="max-w-md w-full">
+          <div className="bg-red-900 text-amber-50 p-6 mb-6 border-8 border-double border-amber-950">
+            <h1 className="text-4xl font-bold text-center">ERROR</h1>
+            <p className="text-center text-amber-200 text-sm mt-2">No team selected</p>
+          </div>
+          
+          <button
+            onClick={onExit}
+            className="w-full py-4 text-lg font-bold bg-stone-600 text-amber-50 border-4 border-amber-900 hover:bg-stone-700"
+          >
+            BACK TO MENU
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // CREATE SCREEN
   if (gamePhase === 'create' && !player) {
@@ -361,10 +434,10 @@ const CareerMode = ({ universe, selectedTeam, onExit }) => {
               {/* Lockers */}
               {[0, 1, 2, 3, 4, 5, 6].map(i => (
                 <g key={i}>
-                  <rect x={50 + i * 110} y="40" width="90" height="180" fill="#2C3E50" stroke="#1A252F" strokeWidth="2"/>
-                  <rect x={60 + i * 110} y="50" width="70" height="160" fill="#34495E" stroke="#1A252F" strokeWidth="1"/>
-                  <circle cx={95 + i * 110} cy="130" r="4" fill="#D4AF37"/>
-                  <line x1={70 + i * 110} y1="190" x2={120 + i * 110} y2="190" stroke="#1A252F" strokeWidth="1"/>
+                  <rect x={50 + i * 90} y="40" width="90" height="180" fill="#2C3E50" stroke="#1A252F" strokeWidth="2"/>
+                  <rect x={60 + i * 90} y="50" width="70" height="160" fill="#34495E" stroke="#1A252F" strokeWidth="1"/>
+                  <circle cx={95 + i * 90} cy="130" r="4" fill="#D4AF37"/>
+                  <line x1={70 + i * 90} y1="190" x2={120 + i * 90} y2="190" stroke="#1A252F" strokeWidth="1"/>
                 </g>
               ))}
               
@@ -397,18 +470,13 @@ const CareerMode = ({ universe, selectedTeam, onExit }) => {
                 <line x1="530" y1="265" x2="540" y2="285" stroke="#1E3A8A" strokeWidth="3"/>
               </g>
               
-              {/* Bulletin Board */}
-              <rect x="600" y="60" width="150" height="200" fill="#6B5345" stroke="#4A3625" strokeWidth="3"/>
-              <rect x="610" y="70" width="130" height="180" fill="#8B7355" stroke="#6B5345" strokeWidth="2"/>
-              <text x="675" y="100" textAnchor="middle" fontSize="14" fontWeight="bold" fill="#000">STANDINGS</text>
-              
               {/* Baseball bat */}
               <line x1="750" y1="230" x2="770" y2="295" stroke="#8B4513" strokeWidth="6"/>
               <circle cx="748" cy="225" r="5" fill="#6B3410"/>
             </svg>
           </div>
 
-          <div className="grid grid-cols-2 gap-6">
+          <div className="max-w-2xl mx-auto">
             <div className="bg-amber-100 p-6 border-4 border-amber-900">
               <h3 className="text-lg font-bold mb-3 text-center">TRAIN ({upgradeCost} XP)</h3>
               <div className="text-center mb-4">
@@ -437,18 +505,6 @@ const CareerMode = ({ universe, selectedTeam, onExit }) => {
                 ))}
               </div>
             </div>
-
-            <div className="bg-stone-900 text-amber-100 p-6 border-4 border-amber-900">
-              <h3 className="text-lg font-bold mb-3 text-center">STANDINGS</h3>
-              <div className="space-y-2">
-                {majorLeagueStandings.map((team, idx) => (
-                  <div key={idx} className="flex justify-between border-b border-stone-700 pb-2">
-                    <span className="text-sm">{idx + 1}. {team.name}</span>
-                    <span className="font-bold text-sm">{team.record.wins}-{team.record.losses}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
           </div>
 
           <button
@@ -464,7 +520,8 @@ const CareerMode = ({ universe, selectedTeam, onExit }) => {
 // SEASON END
 if (gamePhase === 'season-end') {
     const avg = getAvg();
-    const promoted = parseFloat(avg) >= 0.250;
+    const requiredAVG = getRequiredAVG(currentSeason.level);
+    const promoted = parseFloat(avg) >= requiredAVG;
     
     return (
       <div className="min-h-screen bg-amber-50 p-4">
@@ -492,12 +549,31 @@ if (gamePhase === 'season-end') {
             </div>
           </div>
 
+          <div className="bg-amber-100 p-4 border-4 border-amber-900 mb-6">
+            <h3 className="text-lg font-bold mb-3 text-center">PROMOTION REQUIREMENT</h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="text-center border-2 border-amber-700 p-3">
+                <div className="text-xs mb-1">YOUR AVG</div>
+                <div className="text-2xl font-bold">{avg}</div>
+              </div>
+              <div className="text-center border-2 border-amber-700 p-3">
+                <div className="text-xs mb-1">REQUIRED AVG</div>
+                <div className="text-2xl font-bold">{requiredAVG.toFixed(3)}</div>
+              </div>
+            </div>
+            <div className="mt-3 text-center text-sm text-stone-600">
+              Defense: {player.defense} | {player.defense < 50 ? 'Lower defense requires higher AVG' : player.defense > 50 ? 'Higher defense allows lower AVG' : 'Balanced'}
+            </div>
+          </div>
+
           <div className={`p-6 border-4 mb-6 text-center ${promoted ? 'bg-green-100 border-green-700' : 'bg-red-100 border-red-700'}`}>
             <h3 className="text-2xl font-bold mb-2">
               {promoted ? 'PROMOTED!' : 'NOT PROMOTED'}
             </h3>
             <p className="text-sm">
-              {promoted ? 'You hit above .250! Moving up!' : 'Need .250 AVG to advance. Try again.'}
+              {promoted 
+                ? `You hit ${avg} (required: ${requiredAVG.toFixed(3)})! Moving up!` 
+                : `Need ${requiredAVG.toFixed(3)} AVG to advance (you hit ${avg}). Try again.`}
             </p>
           </div>
 
