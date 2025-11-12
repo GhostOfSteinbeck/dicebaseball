@@ -1,6 +1,6 @@
 import React from 'react';
 
-const SeasonEndView = ({ myTeam, universe, season, startDraft, setView }) => {
+const SeasonEndView = ({ myTeam, universe, season, startDraft, setView, startPlayoffs }) => {
   if (!myTeam) {
     return (
       <div className="min-h-screen bg-amber-50 p-4 flex items-center justify-center">
@@ -81,12 +81,10 @@ const SeasonEndView = ({ myTeam, universe, season, startDraft, setView }) => {
           </button>
           
           <button
-            disabled
-            className="py-4 border-4 border-gray-600 text-gray-600 cursor-not-allowed"
-            title="Coming Soon"
+            onClick={startPlayoffs}
+            className="py-4 border-4 border-green-400 hover:bg-green-400 hover:text-black"
           >
             {'>'} BEGIN PLAYOFFS_
-            <div className="text-xs mt-1">[COMING SOON]</div>
           </button>
           
           <button

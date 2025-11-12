@@ -120,3 +120,18 @@ export const simulateScheduledGames = (currentRound, season, universe, myTeam) =
   return playerMatchup;
 };
 
+/**
+ * Simulate a fully automated playoff game (CPU vs CPU)
+ * @param {Object} team1 - First team
+ * @param {Object} team2 - Second team
+ * @returns {Object} Game result with team1Score and team2Score
+ */
+export const simulatePlayoffGame = (team1, team2) => {
+  // Use random pitcher indices for both teams (0-4)
+  const team1PitcherIndex = Math.floor(Math.random() * 5);
+  const team2PitcherIndex = Math.floor(Math.random() * 5);
+  
+  // Fully automated - no lineup, no myTeam reference
+  return runSingleSimulation(team1, team2, team1PitcherIndex, team2PitcherIndex, null, null);
+};
+

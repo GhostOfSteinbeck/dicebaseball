@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { DiceEngine, GAME_CONFIG } from '../engine/gameEngine';
 import * as gmUtils from './gmUtils';
-import { simulateScheduledGames, runSingleSimulation, generatePlayerPerformance } from './gmGameSimulation';
+import { simulateScheduledGames, runSingleSimulation, generatePlayerPerformance, simulatePlayoffGame } from './gmGameSimulation';
 
 // Import all view components
 import DraftView from './gmViews/DraftView';
@@ -14,6 +14,7 @@ import FreeAgentPoolView from './gmViews/FreeAgentPoolView';
 import PromoteProspectView from './gmViews/PromoteProspectView';
 import SeasonEndView from './gmViews/SeasonEndView';
 import SeasonStatsView from './gmViews/SeasonStatsView';
+import PlayoffView from './gmViews/PlayoffView';
 
 const GMMode = ({ selectedTeam, universe, onExit }) => {
   const [engine] = useState(() => new DiceEngine());
@@ -37,6 +38,7 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
   const [selectedToCut, setSelectedToCut] = useState(null);
   const [selectedFreeAgent, setSelectedFreeAgent] = useState(null);
   const [selectedToReplace, setSelectedToReplace] = useState(null);
+  const [playoffState, setPlayoffState] = useState(null);
 
   // Initialize from universe
   useEffect(() => {
@@ -278,6 +280,46 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
   };
 
   // ============================================================================
+  // PLAYOFF HANDLERS
+  // ============================================================================
+
+  const startPlayoffs = () => {
+    // Get top 4 teams from standings
+    const standings = universe.getStandings();
+    const top4 = standings.slice(0, 4);
+    
+    // If player's team doesn't make top 4, randomly pick one of the top 4
+    const playerTeamInTop4 = top4.find(t => t.name === myTeam.name);
+    if (!playerTeamInTop4) {
+      const randomTeam = top4[Math.floor(Math.random() * 4)];
+      // Temporarily set myTeam to one of the top 4 for viewing purposes
+      // (This doesn't change the actual team, just for display)
+    }
+    
+    // Initialize bracket: 1v4 and 2v3
+    const bracket = [
+      {
+        team1: top4[0], // #1 seed
+        team2: top4[3], // #4 seed
+        simulate: () => simulatePlayoffGame(top4[0], top4[3])
+      },
+      {
+        team1: top4[1], // #2 seed
+        team2: top4[2], // #3 seed
+        simulate: () => simulatePlayoffGame(top4[1], top4[2])
+      }
+    ];
+    
+    setPlayoffState({
+      round: 'semifinals',
+      bracket: bracket,
+      results: []
+    });
+    
+    setView('playoffs');
+  };
+
+  // ============================================================================
   // VIEW ROUTING
   // ============================================================================
 
@@ -392,6 +434,19 @@ const GMMode = ({ selectedTeam, universe, onExit }) => {
           season={season}
           startDraft={startDraft}
           setView={setView}
+          startPlayoffs={startPlayoffs}
+        />
+      );
+
+    case 'playoffs':
+      return (
+        <PlayoffView
+          playoffState={playoffState}
+          setPlayoffState={setPlayoffState}
+          season={season}
+          startDraft={startDraft}
+          setView={setView}
+          simulatePlayoffGame={simulatePlayoffGame}
         />
       );
 
